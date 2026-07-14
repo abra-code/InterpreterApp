@@ -39,6 +39,16 @@ TGT_EDITOR=200
 CHAR_TEXT=110
 STATUS_TEXT=300
 
+# Document-translation window control ids (must match doc.window.json). The pickers, Translate,
+# Stop and status ids are deliberately shared with the text window so the mode-aware poller and
+# the interp.from/to.changed + interp.stop handlers work in both windows without change.
+QL_INPUT=120
+QL_OUTPUT=220
+INPUT_PATH_TEXT=130
+OUTPUT_PATH_TEXT=230
+CHOOSE_OUTPUT_BTN=231
+REVEAL_OUTPUT_BTN=232
+
 # mlx-agent map generation settings for translation.
 EXTRA_EOS="<end_of_turn>"
 GEN_TEMP="0"
@@ -123,4 +133,107 @@ disk_free_bytes() {   # $1 = path
     local _p="$1"
     while [ -n "$_p" ] && [ ! -e "$_p" ]; do _p=$(/usr/bin/dirname "$_p"); [ "$_p" = "/" ] && break; done
     /bin/df -k "$_p" 2>/dev/null | /usr/bin/awk 'NR==2 { print $4 * 1024; exit }'
+}
+
+# --- shared translation helpers (used by both the text and document windows) -------------------
+
+# 1-based row of a language code in the spool's langcodes file, or empty if absent.
+lang_code_index() {   # $1 = spool, $2 = code
+    /usr/bin/grep -n "^${2}\$" "$1/langcodes" 2>/dev/null | /usr/bin/head -1 | /usr/bin/cut -d: -f1
+}
+
+# Resolve a picker's 1-based index to a language code via the spool's langcodes file. Prints the
+# code (empty for a missing/non-numeric index or an out-of-range row).
+resolve_lang_code() {   # $1 = spool, $2 = 1-based index
+    case "$2" in ''|*[!0-9]*) return 0 ;; esac
+    /usr/bin/sed -n "${2}p" "$1/langcodes"
+}
+
+# Populate the From/To language pickers from languages.tsv and restore the saved selection.
+# The list is sorted alphabetically by display name (the shipped TSV stays the source of truth):
+# we sort a copy into a temp file first (not a "sort | while" pipe) so the loop runs in this shell
+# and $_opts survives it; sorting by the leading name field is safe because names contain no tabs.
+# A parallel ordered langcodes file lets handlers map a picker index -> language code. Default
+# From/To are looked up by code (en/es) rather than assumed positions, since the list is sorted.
+populate_language_pickers() {   # $1 = spool
+    local _spool="$1"
+    local _tab _sorted _opts _first _name _code
+    _tab=$(/usr/bin/printf '\t')
+    _sorted="$_spool/languages.sorted.tsv"
+    LC_ALL=C /usr/bin/sort -f "$RESOURCES_DIR/languages.tsv" > "$_sorted"
+    /bin/rm -f "$_spool/langcodes"
+    _opts="["
+    _first=1
+    while IFS="$_tab" read -r _name _code; do
+        [ -n "$_name" ] || continue
+        [ -n "$_code" ] || continue
+        if [ "$_first" = 1 ]; then _first=0; else _opts="$_opts,"; fi
+        _opts="$_opts\"$_name\""
+        /usr/bin/printf '%s\n' "$_code" >> "$_spool/langcodes"
+    done < "$_sorted"
+    _opts="$_opts]"
+
+    "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_opts"
+    "$dialog" "$window_uuid" "$TO_PICKER" omc_set_property "options" "$_opts"
+
+    local _nlangs _default_from _default_to _saved_from _saved_to
+    _nlangs=$(/usr/bin/wc -l < "$_spool/langcodes" | /usr/bin/tr -d ' ')
+    [ -n "$_nlangs" ] && [ "$_nlangs" -ge 1 ] 2>/dev/null || _nlangs=1
+    _default_from=$(lang_code_index "$_spool" en); case "$_default_from" in ''|*[!0-9]*) _default_from=1 ;; esac
+    _default_to=$(lang_code_index "$_spool" es);   case "$_default_to"   in ''|*[!0-9]*) _default_to=$_default_from ;; esac
+    _saved_from=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
+    _saved_to=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
+    case "$_saved_from" in ''|*[!0-9]*) _saved_from=$_default_from ;; esac
+    case "$_saved_to" in ''|*[!0-9]*) _saved_to=$_default_to ;; esac
+    [ "$_saved_from" -ge 1 ] && [ "$_saved_from" -le "$_nlangs" ] 2>/dev/null || _saved_from=$_default_from
+    [ "$_saved_to" -ge 1 ] && [ "$_saved_to" -le "$_nlangs" ] 2>/dev/null || _saved_to=$_default_to
+    "$dialog" "$window_uuid" "$FROM_PICKER" "$_saved_from"
+    "$dialog" "$window_uuid" "$TO_PICKER" "$_saved_to"
+}
+
+# Compose a translation job from source text (read on STDIN) and drop it into the spool for the
+# map broker; the poller reflects progress/results. This is the shared core of dispatch used by
+# both windows. The source text goes to a per-epoch file (printf %s never interprets content) so
+# a rapid re-dispatch can never pair one job's text with another job's language metadata; job.json
+# then carries only fixed, safe values. Callers hold the dispatch lock and own the UI transitions.
+publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; source text on STDIN
+    local _spool="$1" _from="$2" _to="$3" _epoch _srcfile
+    _epoch=$(pb_get "interp_epoch_${window_uuid}")
+    case "$_epoch" in ''|*[!0-9]*) _epoch=0 ;; esac
+    _epoch=$((_epoch + 1))
+    pb_set "interp_epoch_${window_uuid}" "$_epoch"
+
+    _srcfile="source.${_epoch}.txt"
+    /bin/cat > "$_spool/$_srcfile"
+
+    /bin/cat > "$_spool/job.json.tmp" <<EOF
+{"epoch":$_epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$_srcfile","messages":[{"role":"user","content":[{"type":"text","source_lang_code":"$_from","target_lang_code":"$_to","text":"{{chunk}}"}]}]}
+EOF
+    # Drop the previous job's output so the poller re-pushes only once the broker writes fresh
+    # output; stamp the dispatch moment (high-resolution) and clear any prior elapsed so the poller
+    # can report how long this translation took when it observes "done".
+    /bin/rm -f "$_spool/result.txt" "$_spool/translate.elapsed"
+    /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$_spool/translate.start" 2>/dev/null
+    /bin/mv "$_spool/job.json.tmp" "$_spool/job.json"
+}
+
+# Convert a document to plain text via textutil. Returns textutil's exit status (non-zero on an
+# unsupported/damaged file). Plain-text and rich inputs alike pass through -convert txt.
+convert_to_plain_text() {   # $1 = input path, $2 = output file
+    /usr/bin/textutil -convert txt -output "$2" "$1" 2>/dev/null
+}
+
+# Default translated-output path for an input document: "<name-no-ext>-translated.txt" next to the
+# original, made unique by appending -1, -2, ... so an existing file is never overwritten.
+unique_output_path() {   # $1 = input path
+    local _dir _base _cand _n
+    _dir=$(/usr/bin/dirname "$1")
+    _base=$(/usr/bin/basename "$1"); _base="${_base%.*}"
+    _cand="$_dir/${_base}-translated.txt"
+    _n=1
+    while [ -e "$_cand" ]; do
+        _cand="$_dir/${_base}-translated-${_n}.txt"
+        _n=$((_n + 1))
+    done
+    /usr/bin/printf '%s' "$_cand"
 }

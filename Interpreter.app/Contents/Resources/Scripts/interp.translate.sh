@@ -28,12 +28,8 @@ enable_ctrl "$STOP_BTN"
 
 # Resolve picker indices (1-based) to language codes via the ordered code file. A stale/bogus
 # index that resolves to nothing is surfaced, not silently dropped.
-case "$from_idx" in ''|*[!0-9]*) from_idx="" ;; esac
-case "$to_idx" in ''|*[!0-9]*) to_idx="" ;; esac
-src_code=""
-tgt_code=""
-[ -n "$from_idx" ] && src_code=$(/usr/bin/sed -n "${from_idx}p" "$spool/langcodes")
-[ -n "$to_idx" ] && tgt_code=$(/usr/bin/sed -n "${to_idx}p" "$spool/langcodes")
+src_code=$(resolve_lang_code "$spool" "$from_idx")
+tgt_code=$(resolve_lang_code "$spool" "$to_idx")
 if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
     disable_ctrl "$STOP_BTN"
@@ -46,35 +42,14 @@ fi
 nchars=$(/usr/bin/printf '%s' "$src" | LC_ALL=en_US.UTF-8 /usr/bin/wc -m | /usr/bin/tr -d ' ')
 "$dialog" "$window_uuid" "$CHAR_TEXT" "$nchars characters"
 
-# Bump the epoch (a new job is a higher epoch); safe under the dispatch lock.
-epoch=$(pb_get "interp_epoch_${window_uuid}")
-case "$epoch" in ''|*[!0-9]*) epoch=0 ;; esac
-epoch=$((epoch + 1))
-pb_set "interp_epoch_${window_uuid}" "$epoch"
-
-# Source text -> per-epoch file (printf %s never interprets the content), so a rapid re-dispatch
-# can never pair one job's text with another job's language metadata.
-srcfile="source.${epoch}.txt"
-/usr/bin/printf '%s' "$src" > "$spool/$srcfile"
-
-# Build job.json (all values fixed/safe: numbers, language codes, the {{chunk}} placeholder)
-# and publish it atomically. output=stitch reassembles the per-chunk translations into one
-# document; the model's own template turns the structured content into the translation prompt.
-/bin/cat > "$spool/job.json.tmp" <<EOF
-{"epoch":$epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$srcfile","messages":[{"role":"user","content":[{"type":"text","source_lang_code":"$src_code","target_lang_code":"$tgt_code","text":"{{chunk}}"}]}]}
-EOF
-# Erase the previous translation from the target pane immediately (a new job starts now). We
-# clear the editor directly and drop the stale result.txt so the poller re-pushes only once the
-# broker writes fresh output. This is why the app needs no explicit Clear button.
-/bin/rm -f "$spool/result.txt"
+# Erase the previous translation from the target pane immediately (a new job starts now). The
+# shared dispatch also drops stale result.txt so the poller re-pushes only once the broker writes
+# fresh output; clearing the editor here is why the app needs no explicit Clear button.
 /usr/bin/printf '' | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
 
-# Timing: stamp the dispatch moment (high-resolution) and clear any previous result's elapsed,
-# so the poller can report how long this translation took when it observes "done".
-/bin/rm -f "$spool/translate.elapsed"
-/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$spool/translate.start" 2>/dev/null
-
-/bin/mv "$spool/job.json.tmp" "$spool/job.json"
+# Publish the job from the editor's text (shared with the document window): bumps the epoch, writes
+# the per-epoch source file, builds+publishes job.json, and stamps the dispatch time for timing.
+/usr/bin/printf '%s' "$src" | publish_translation_job "$spool" "$src_code" "$tgt_code"
 
 set_status "Translating…"
 
