@@ -1,21 +1,30 @@
-# interp.poll.sh - backgrounded UI poller, one per window. Spawned by interp.window.init.
-# Runs until the spool directory disappears (window close / app quit), then exits. Not an OMC
-# command - launched directly via /bin/sh.  args: <window_uuid> <spool_dir>
+# interp.poll.sh - backgrounded UI poller, one per window. Spawned by interp.window.init (text
+# mode) or interp.doc.init (doc mode). Runs until the spool directory disappears (window close /
+# app quit), then exits. Not an OMC command - launched directly via /bin/sh.
+#   args: <window_uuid> <spool_dir> [mode]   mode = text (default) | doc
 #
 # This poller OWNS the mlx-agent map broker. Each tick it:
 #   1. syncs the Model picker + a `modelpaths` index to whatever is installed under Models/,
 #      auto-selecting a model when none is chosen yet (first-run pickup after a download);
 #   2. ensures exactly one broker is running for the selected model, (re)spawning it when the
 #      selection changes (in-dialog switch) or the broker died (crash recovery);
-#   3. reflects the broker's status.json (-> status line + button state) and result.txt
-#      (-> target editor) into the window.
+#   3. reflects the broker's status.json (-> status line + button state) and result.txt into the
+#      window: text mode pushes into the target editor; doc mode writes the finished translation
+#      to the chosen output file and points the output QuickLook at it.
 # Single ownership here is what lets first-run and model switching work without the init or the
-# switch handler managing broker processes.
+# switch handler managing broker processes. The two windows share this one poller; only the swap
+# button (text-only) and the result delivery differ by mode.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
 window_uuid="$1"       # override the (inherited) uuid with the explicit arg
 spool="$2"
+MODE="${3:-text}"      # text | doc
+
+# The document window has no Swap control; make swap toggles no-ops there so the shared status
+# logic below can call them unconditionally.
+enable_swap()  { [ "$MODE" = doc ] || enable_ctrl "$SWAP_BTN"; }
+disable_swap() { [ "$MODE" = doc ] || disable_ctrl "$SWAP_BTN"; }
 
 # Cross-tick state (globals, UPPERCASE) mutated by the functions below.
 LAST_MODELS="__unset__"   # signature of the installed-model set (rebuild the picker on change).
@@ -108,7 +117,7 @@ ensure_broker() {
                    "$spool/translate.start" "$spool/translate.elapsed"
     fi
 
-    disable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+    disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
     local _npid="$(spawn_broker "$spool" "$_sel")"
     /usr/bin/printf '%s' "$_npid" > "$spool/broker.pid"
     /usr/bin/printf '%s' "$_sel"  > "$spool/broker.model"
@@ -160,18 +169,18 @@ reflect_ui() {
     local _es _cn _tn _cur _st _nw
     case "$_state" in
         nomodel)
-            disable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "No translation model. Choose \"Download models…\" from the Model menu." ;;
         loading)
-            disable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Loading model…" ;;
         ready)
-            enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             # Fresh post-load state: show the model's measured speed so it can be compared.
             if [ -n "$_tpsN" ]; then set_status "Ready — $_tpsN tok/s"
             else set_status "Ready"; fi ;;
         mapping)
-            disable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$SWAP_BTN"; enable_ctrl "$STOP_BTN"
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
             # status.json `chunk` is a COMPLETED count (0..total); the chunk being worked on is
             # completed+1. Show that as a human 1-based "chunk N of M", capped at M, and only when
             # there is more than one chunk (a single chunk needs no counter).
@@ -189,7 +198,7 @@ reflect_ui() {
             [ -z "$_tail" ] && _tail="…"
             set_status "$_base$_tail" ;;
         done)
-            enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             # First time we observe this job's completion, turn the dispatch stamp into an elapsed
             # string; afterwards just reuse it (the done state re-renders on label changes).
             if [ -f "$spool/translate.start" ]; then
@@ -211,10 +220,10 @@ reflect_ui() {
             fi
             set_status "Ready$_dtail" ;;
         cancelled)
-            enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             set_status "Cancelled." ;;
         error)
-            enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"; disable_ctrl "$STOP_BTN"
+            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             set_status "Error: ${_msg:-unknown}" ;;
     esac
 }
@@ -223,6 +232,37 @@ reflect_result() {
     [ -f "$spool/result.txt" ] || return 0
     local _rsig="$(/usr/bin/stat -f '%m %z' "$spool/result.txt" 2>/dev/null)"
     [ "$_rsig" = "$LAST_RESULT_SIG" ] && return 0
+
+    if [ "$MODE" = doc ]; then
+        # Document mode: deliver only the finished translation, and only once. result.txt grows
+        # per chunk during mapping; hold off until the broker reports "done". status.json is NOT
+        # cleared on re-dispatch, so a prior job's stale "done" could otherwise pair with the new
+        # job's mid-write result.txt and ship truncated output - gate on the status epoch matching
+        # the current job.json epoch so only THIS job's completion delivers. LAST_RESULT_SIG stays
+        # unset until we act, so this fires on the completing tick.
+        local _st _ep _jep _out
+        _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+        [ "$_st" = done ] || return 0
+        _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
+        _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
+        [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
+        _out="$(/bin/cat "$spool/output.path" 2>/dev/null)"
+        [ -n "$_out" ] || return 0
+        # Write atomically. Commit LAST_RESULT_SIG only after acting (success OR a surfaced error),
+        # never before the write - otherwise a write failure is silently masked by reflect_ui's
+        # independent "Ready" and the user believes a file was saved that was not.
+        if /bin/cat "$spool/result.txt" > "$_out.part.$$" 2>/dev/null && /bin/mv "$_out.part.$$" "$_out" 2>/dev/null; then
+            LAST_RESULT_SIG="$_rsig"
+            "$dialog" "$window_uuid" "$QL_OUTPUT" "$_out"
+            enable_ctrl "$REVEAL_OUTPUT_BTN"
+        else
+            /bin/rm -f "$_out.part.$$"
+            LAST_RESULT_SIG="$_rsig"
+            set_status "Could not write the translation to $_out"
+        fi
+        return 0
+    fi
+
     LAST_RESULT_SIG="$_rsig"
     /bin/cat "$spool/result.txt" \
         | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain

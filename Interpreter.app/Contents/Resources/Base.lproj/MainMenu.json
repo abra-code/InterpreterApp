@@ -1,5 +1,31 @@
 [
   {
+    "type": "CommandGroup",
+    "properties": { "placement": "replacing", "placementTarget": "new" },
+    "children": [
+      { "type": "Button",
+        "properties": {
+          "title": "New",
+          "actionID": "interp.new",
+          "keyboardShortcut": { "key": "n", "modifiers": ["command"] }
+        }
+      }
+    ]
+  },
+  {
+    "type": "CommandGroup",
+    "properties": { "placement": "replacing", "placementTarget": "open" },
+    "children": [
+      { "type": "Button",
+        "properties": {
+          "title": "Open…",
+          "actionID": "interp.open",
+          "keyboardShortcut": { "key": "o", "modifiers": ["command"] }
+        }
+      }
+    ]
+  },
+  {
     "type": "CommandMenu",
     "properties": {
       "name": "Models"

@@ -43,7 +43,6 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>interpreter</string>
-				<string>actionui-window</string>
 			</array>
 		</dict>
 	</array>
@@ -60,5 +59,52 @@
 	<string>Interpreter sends AppleEvents to other apps to provide functionality unique to this applet.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Translate with Interpreter</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runOMCService</string>
+			<key>NSPortName</key>
+			<string>OMCService</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.text</string>
+			</array>
+			<key>NSUserData</key>
+			<string>interp.service.text</string>
+		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Translate with Interpreter</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runOMCService</string>
+			<key>NSPortName</key>
+			<string>OMCService</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSReturnTypes</key>
+			<array/>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.text</string>
+				<string>com.apple.rtfd</string>
+				<string>com.microsoft.word.doc</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.word.wordml</string>
+				<string>org.oasis-open.opendocument.text</string>
+				<string>com.apple.webarchive</string>
+			</array>
+			<key>NSUserData</key>
+			<string>interp.service.file</string>
+		</dict>
+	</array>
 </dict>
 </plist>

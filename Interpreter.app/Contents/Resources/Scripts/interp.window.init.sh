@@ -21,6 +21,16 @@ set_status "Starting…"
 # the document window (see lib.interp.sh).
 populate_language_pickers "$spool"
 
+# --- selected-text handoff from the "Translate with Interpreter" service -----
+# interp.service.text stashes the selection in a temp file and points this key at it. Load it into
+# the left editor once, then consume the key and remove the file so a later File > New opens empty.
+_svc_text="$(pb_get "INTERP_SERVICE_TEXT_FILE")"
+pb_set "INTERP_SERVICE_TEXT_FILE" ""      # consume the handoff first, so a failed/duplicate open cannot re-inject it
+if [ -n "$_svc_text" ] && [ -f "$_svc_text" ]; then
+    /bin/cat "$_svc_text" | "$dialog" "$window_uuid" "$SRC_EDITOR" omc_set_value_from_stdin plain
+    /bin/rm -f "$_svc_text"
+fi
+
 # --- spawn the UI poller (which owns the broker) ----------------------------
 /bin/sh "$SCRIPTS_DIR/interp.poll.sh" "$window_uuid" "$spool" \
     < /dev/null > "$spool/poll.log" 2>&1 &

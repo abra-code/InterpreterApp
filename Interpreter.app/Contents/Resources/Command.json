@@ -4,19 +4,98 @@
       "NAME": "Interpreter",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file",
-      "ACTIONUI_WINDOW": {
-        "JSON_NAME": "interpreter.window",
-        "WINDOW_TITLE": "Interpreter",
-        "IS_BLOCKING": false,
-        "INIT_SUBCOMMAND_ID": "interp.window.init",
-        "END_CANCEL_SUBCOMMAND_ID": "interp.window.cancel"
-      },
       "REQUIRED_OMC_VERSION": "5.1",
       "REQUIRED_MAC_OS_MIN_VERSION": "14.6"
     },
     {
       "NAME": "Interpreter",
       "COMMAND_ID": "interp.window.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.new",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "interpreter.window",
+        "WINDOW_TITLE": "Interpreter",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.window.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.window.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.open",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose a document to translate",
+        "ALLOW_MULTIPLE_ITEMS": false,
+        "ALLOWED_CONTENT_TYPES": [
+          "public.plain-text",
+          "public.rtf",
+          "com.apple.rtfd",
+          "public.html",
+          "com.microsoft.word.doc",
+          "org.openxmlformats.wordprocessingml.document",
+          "org.oasis-open.opendocument.text",
+          "com.apple.webarchive"
+        ]
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.service.text",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.service.file",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "doc.window",
+        "WINDOW_TITLE": "Translate Document",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.doc.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.doc.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc.translate",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_20_VALUE": "",
+        "OMC_ACTIONUI_VIEW_21_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc.choose.output",
+      "EXECUTION_MODE": "exe_script_file",
+      "SAVE_AS_DIALOG": {
+        "MESSAGE": "Save the translation as",
+        "ALLOWED_CONTENT_TYPES": ["public.plain-text"]
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc.reveal",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.doc.cancel",
       "EXECUTION_MODE": "exe_script_file"
     },
     {

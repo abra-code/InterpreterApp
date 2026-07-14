@@ -1,0 +1,179 @@
+{
+  "type": "VStack",
+  "properties": {
+    "spacing": 10,
+    "padding": 14,
+    "background": "background",
+    "frame": {
+      "minWidth": 900,
+      "minHeight": 520,
+      "idealWidth": 1040,
+      "idealHeight": 660,
+      "maxWidth": "infinity",
+      "maxHeight": "infinity"
+    }
+  },
+  "children": [
+    {
+      "type": "HSplitView",
+      "properties": { "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+      "children": [
+        {
+          "type": "VStack",
+          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 2, "trailing": 6 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "HStack",
+              "properties": { "spacing": 6, "frame": { "maxWidth": "infinity" } },
+              "children": [
+                { "type": "Spacer" },
+                { "type": "Text", "properties": { "text": "From", "foregroundStyle": "secondary" } },
+                {
+                  "type": "Picker",
+                  "id": 20,
+                  "properties": {
+                    "pickerStyle": "menu",
+                    "labelsHidden": true,
+                    "options": ["English"],
+                    "actionID": "interp.from.changed",
+                    "frame": { "minWidth": 160, "idealWidth": 200 }
+                  }
+                },
+                { "type": "Spacer" }
+              ]
+            },
+            {
+              "type": "QuickLook",
+              "id": 120,
+              "properties": {
+                "previewStyle": "normal",
+                "showsChrome": false,
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
+        },
+        {
+          "type": "VStack",
+          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 6, "trailing": 2 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "HStack",
+              "properties": { "spacing": 6, "frame": { "maxWidth": "infinity" } },
+              "children": [
+                { "type": "Spacer" },
+                { "type": "Text", "properties": { "text": "To", "foregroundStyle": "secondary" } },
+                {
+                  "type": "Picker",
+                  "id": 21,
+                  "properties": {
+                    "pickerStyle": "menu",
+                    "labelsHidden": true,
+                    "options": ["English"],
+                    "actionID": "interp.to.changed",
+                    "frame": { "minWidth": 160, "idealWidth": 200 }
+                  }
+                },
+                { "type": "Spacer" }
+              ]
+            },
+            {
+              "type": "QuickLook",
+              "id": 220,
+              "properties": {
+                "previewStyle": "normal",
+                "showsChrome": false,
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 6 },
+      "children": [
+        { "type": "Text", "properties": { "text": "Original", "font": "caption", "foregroundStyle": "secondary", "frame": { "width": 72, "alignment": "trailing" } } },
+        { "type": "Text", "id": 130, "properties": { "text": "", "font": "caption", "foregroundStyle": "primary", "frame": { "maxWidth": "infinity", "alignment": "leading" } } }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 6 },
+      "children": [
+        { "type": "Text", "properties": { "text": "Translation", "font": "caption", "foregroundStyle": "secondary", "frame": { "width": 72, "alignment": "trailing" } } },
+        { "type": "Text", "id": 230, "properties": { "text": "", "font": "caption", "foregroundStyle": "primary", "frame": { "maxWidth": "infinity", "alignment": "leading" } } },
+        {
+          "type": "Button",
+          "id": 231,
+          "properties": {
+            "title": "Choose…",
+            "buttonStyle": "bordered",
+            "controlSize": "small",
+            "help": "Choose where to save the translation",
+            "actionID": "interp.doc.choose.output"
+          }
+        },
+        {
+          "type": "Button",
+          "id": 232,
+          "properties": {
+            "title": "Reveal",
+            "buttonStyle": "bordered",
+            "controlSize": "small",
+            "disabled": true,
+            "help": "Show the translated file in the Finder",
+            "actionID": "interp.doc.reveal"
+          }
+        }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8 },
+      "children": [
+        {
+          "type": "Text",
+          "id": 300,
+          "properties": { "text": "Loading model…", "font": "caption", "foregroundStyle": "secondary", "frame": { "maxWidth": "infinity", "alignment": "leading" } }
+        },
+        { "type": "Text", "properties": { "text": "Model", "foregroundStyle": "secondary" } },
+        {
+          "type": "Picker",
+          "id": 25,
+          "properties": {
+            "pickerStyle": "menu",
+            "labelsHidden": true,
+            "options": ["Loading…"],
+            "actionID": "interp.model.changed",
+            "help": "Choose or download a translation model",
+            "frame": { "minWidth": 240, "idealWidth": 280 }
+          }
+        },
+        {
+          "type": "Button",
+          "id": 41,
+          "properties": {
+            "title": "Stop",
+            "buttonStyle": "bordered",
+            "disabled": true,
+            "actionID": "interp.stop"
+          }
+        },
+        {
+          "type": "Button",
+          "id": 40,
+          "properties": {
+            "title": "Translate",
+            "buttonStyle": "borderedProminent",
+            "keyboardShortcut": { "key": "return", "modifiers": ["command"] },
+            "actionID": "interp.doc.translate"
+          }
+        }
+      ]
+    }
+  ]
+}

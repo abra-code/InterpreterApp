@@ -94,12 +94,12 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
         case "$_tier" in
             best)
                 if [ "$_heavy" = 1 ]; then
-                    _desc="Highest quality, but heavy - uses most of your memory, so other apps may slow down."
+                    _desc="Highest quality, but heavy and much slower - uses most of your memory, so other apps may slow down."
                 else
-                    _desc="Highest quality. A larger model - more memory and a little slower."
+                    _desc="Highest quality, but much slower and more memory-demanding than the recommended model."
                 fi ;;
-            balanced) _desc="Recommended. Great quality with comfortable memory use and speed." ;;
-            faster)   _desc="Fastest and smallest. Best for quick translations; a little weaker on nuanced text." ;;
+            balanced) _desc="Recommended. Near-top quality and much faster than the largest model - best choice for accuracy and speed." ;;
+            faster)   _desc="Fastest and smallest, but noticeably weaker - it can mistranslate nuanced text." ;;
         esac
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$_tier" "$_repo" "$(model_short_label "$_repo")" "$_size" "$_rec" "$_heavy" "$_desc"

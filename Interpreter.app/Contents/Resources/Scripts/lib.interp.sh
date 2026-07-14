@@ -60,6 +60,11 @@ BUDGET_TOKENS="1200"
 pb_set() { "$pasteboard" "$1" set "$2"; }
 pb_get() { "$pasteboard" "$1" get 2>/dev/null; }
 
+# Open the document-translation window for a file: stash the path on the private handoff key that
+# interp.doc.init consumes, then chain to the doc window. Shared by the launch/drop dispatcher,
+# File > Open, and the "Translate with Interpreter" file service so the handoff stays in one place.
+route_document() { pb_set "INTERP_DOC_INPUT_PATH" "$1"; "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.doc"; }
+
 spool_dir_for() { echo "$SESSIONS_DIR/$1"; }
 
 set_status()   { "$dialog" "$window_uuid" "$STATUS_TEXT" "$1"; }
