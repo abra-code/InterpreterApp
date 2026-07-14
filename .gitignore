@@ -1,0 +1,6 @@
+Interpreter.app/Contents/Frameworks
+Interpreter.app/Contents/MacOS
+Interpreter.app/Contents/Support
+Interpreter.app/Contents/_CodeSignature
+.DS_Store
+Private

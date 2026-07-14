@@ -1,0 +1,93 @@
+{
+  "COMMAND_LIST": [
+    {
+      "NAME": "Interpreter",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "interpreter.window",
+        "WINDOW_TITLE": "Interpreter",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.window.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.window.cancel"
+      },
+      "REQUIRED_OMC_VERSION": "5.1",
+      "REQUIRED_MAC_OS_MIN_VERSION": "14.6"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.window.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.translate",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_100_VALUE": "",
+        "OMC_ACTIONUI_VIEW_20_VALUE": "",
+        "OMC_ACTIONUI_VIEW_21_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.stop",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.swap",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_100_VALUE": "",
+        "OMC_ACTIONUI_VIEW_200_VALUE": "",
+        "OMC_ACTIONUI_VIEW_20_VALUE": "",
+        "OMC_ACTIONUI_VIEW_21_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.copy",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_200_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.clear",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.from.changed",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_20_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.to.changed",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_21_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.window.cancel",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "app.will.terminate",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true,
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_FRONT_PROCESS_ID": ""
+      }
+    }
+  ],
+  "VERSION": 2
+}

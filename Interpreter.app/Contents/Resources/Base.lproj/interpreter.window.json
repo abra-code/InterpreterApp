@@ -1,0 +1,150 @@
+{
+  "type": "VStack",
+  "properties": {
+    "spacing": 8,
+    "padding": 12,
+    "frame": {
+      "minWidth": 900,
+      "minHeight": 520,
+      "idealWidth": 1040,
+      "idealHeight": 640,
+      "maxWidth": "infinity",
+      "maxHeight": "infinity"
+    }
+  },
+  "children": [
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8 },
+      "children": [
+        {
+          "type": "HStack",
+          "properties": { "spacing": 6, "frame": { "maxWidth": "infinity" } },
+          "children": [
+            { "type": "Spacer" },
+            { "type": "Text", "properties": { "text": "From", "foregroundStyle": "secondary" } },
+            {
+              "type": "Picker",
+              "id": 20,
+              "properties": {
+                "pickerStyle": "menu",
+                "labelsHidden": true,
+                "options": ["English"],
+                "actionID": "interp.from.changed",
+                "frame": { "minWidth": 180, "idealWidth": 220 }
+              }
+            },
+            { "type": "Spacer" }
+          ]
+        },
+        {
+          "type": "Button",
+          "id": 30,
+          "properties": {
+            "systemImage": "arrow.left.arrow.right",
+            "help": "Swap languages and panes",
+            "buttonStyle": "bordered",
+            "actionID": "interp.swap"
+          }
+        },
+        {
+          "type": "HStack",
+          "properties": { "spacing": 6, "frame": { "maxWidth": "infinity" } },
+          "children": [
+            { "type": "Spacer" },
+            { "type": "Text", "properties": { "text": "To", "foregroundStyle": "secondary" } },
+            {
+              "type": "Picker",
+              "id": 21,
+              "properties": {
+                "pickerStyle": "menu",
+                "labelsHidden": true,
+                "options": ["English"],
+                "actionID": "interp.to.changed",
+                "frame": { "minWidth": 180, "idealWidth": 220 }
+              }
+            },
+            { "type": "Spacer" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "HSplitView",
+      "properties": { "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+      "children": [
+        {
+          "type": "TextEditor",
+          "id": 100,
+          "properties": {
+            "placeholder": "Enter text to translate…",
+            "font": { "size": 13, "design": "default" },
+            "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" }
+          }
+        },
+        {
+          "type": "TextEditor",
+          "id": 200,
+          "properties": {
+            "readOnly": true,
+            "placeholder": "Translation…",
+            "font": { "size": 13, "design": "default" },
+            "background": "background.secondary",
+            "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8 },
+      "children": [
+        {
+          "type": "Text",
+          "id": 110,
+          "properties": { "text": "0 characters", "font": "caption", "foregroundStyle": "secondary" }
+        },
+        { "type": "Spacer" },
+        {
+          "type": "Button",
+          "id": 60,
+          "properties": { "title": "Clear", "buttonStyle": "bordered", "actionID": "interp.clear" }
+        },
+        {
+          "type": "Button",
+          "id": 50,
+          "properties": { "title": "Copy", "buttonStyle": "bordered", "actionID": "interp.copy" }
+        },
+        {
+          "type": "Button",
+          "id": 41,
+          "properties": {
+            "title": "Stop",
+            "buttonStyle": "bordered",
+            "disabled": true,
+            "actionID": "interp.stop"
+          }
+        },
+        {
+          "type": "Button",
+          "id": 40,
+          "properties": {
+            "title": "Translate",
+            "buttonStyle": "borderedProminent",
+            "keyboardShortcut": { "key": "return", "modifiers": ["command"] },
+            "actionID": "interp.translate"
+          }
+        }
+      ]
+    },
+    {
+      "type": "Text",
+      "id": 300,
+      "properties": {
+        "text": "Loading model…",
+        "font": "caption",
+        "foregroundStyle": "secondary"
+      }
+    }
+  ]
+}
