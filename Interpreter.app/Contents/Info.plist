@@ -22,9 +22,9 @@
 	<key>CFBundleExecutable</key>
 	<string>Interpreter</string>
 	<key>CFBundleIconFile</key>
-	<string>ActionUI Window</string>
+	<string>Interpreter</string>
 	<key>CFBundleIconName</key>
-	<string>ActionUI Window</string>
+	<string>Interpreter</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.abracode.Interpreter</string>
 	<key>CFBundleInfoDictionaryVersion</key>

@@ -1,8 +1,9 @@
 {
   "type": "VStack",
   "properties": {
-    "spacing": 8,
-    "padding": 12,
+    "spacing": 10,
+    "padding": 14,
+    "background": "background",
     "frame": {
       "minWidth": 900,
       "minHeight": 520,
@@ -74,24 +75,41 @@
       "properties": { "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
       "children": [
         {
-          "type": "TextEditor",
-          "id": 100,
-          "properties": {
-            "placeholder": "Enter text to translate…",
-            "font": { "size": 13, "design": "default" },
-            "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" }
-          }
+          "type": "VStack",
+          "properties": { "padding": { "top": 2, "bottom": 2, "leading": 2, "trailing": 6 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "TextEditor",
+              "id": 100,
+              "properties": {
+                "placeholder": "Enter text to translate…",
+                "font": { "size": 13, "design": "default" },
+                "background": "background.secondary",
+                "scrollContentBackground": "hidden",
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
         },
         {
-          "type": "TextEditor",
-          "id": 200,
-          "properties": {
-            "readOnly": true,
-            "placeholder": "Translation…",
-            "font": { "size": 13, "design": "default" },
-            "background": "background.secondary",
-            "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" }
-          }
+          "type": "VStack",
+          "properties": { "padding": { "top": 2, "bottom": 2, "leading": 6, "trailing": 2 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "TextEditor",
+              "id": 200,
+              "properties": {
+                "readOnly": true,
+                "placeholder": "Translation…",
+                "font": { "size": 13, "design": "default" },
+                "background": "background.secondary",
+                "scrollContentBackground": "hidden",
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
         }
       ]
     },
@@ -102,18 +120,20 @@
         {
           "type": "Text",
           "id": 110,
-          "properties": { "text": "0 characters", "font": "caption", "foregroundStyle": "secondary" }
+          "properties": { "text": "0 characters", "font": "caption", "foregroundStyle": "secondary", "frame": { "maxWidth": "infinity", "alignment": "leading" } }
         },
-        { "type": "Spacer" },
+        { "type": "Text", "properties": { "text": "Model", "foregroundStyle": "secondary" } },
         {
-          "type": "Button",
-          "id": 60,
-          "properties": { "title": "Clear", "buttonStyle": "bordered", "actionID": "interp.clear" }
-        },
-        {
-          "type": "Button",
-          "id": 50,
-          "properties": { "title": "Copy", "buttonStyle": "bordered", "actionID": "interp.copy" }
+          "type": "Picker",
+          "id": 25,
+          "properties": {
+            "pickerStyle": "menu",
+            "labelsHidden": true,
+            "options": ["Loading…"],
+            "actionID": "interp.model.changed",
+            "help": "Choose or download a translation model",
+            "frame": { "minWidth": 260, "idealWidth": 300 }
+          }
         },
         {
           "type": "Button",

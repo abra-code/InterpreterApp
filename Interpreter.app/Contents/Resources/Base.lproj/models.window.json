@@ -1,0 +1,151 @@
+{
+  "type": "VStack",
+  "properties": {
+    "spacing": 14,
+    "padding": 20,
+    "alignment": "leading",
+    "frame": {
+      "minWidth": 520,
+      "minHeight": 360,
+      "idealWidth": 600,
+      "idealHeight": 470,
+      "maxWidth": "infinity",
+      "maxHeight": "infinity"
+    }
+  },
+  "children": [
+    {
+      "type": "Text",
+      "id": 900,
+      "properties": { "text": "Translation Models", "font": "title2" }
+    },
+    {
+      "type": "Text",
+      "id": 901,
+      "properties": {
+        "text": "Download a model to translate on your Mac. The recommended choice for your memory is marked.",
+        "font": "callout",
+        "foregroundStyle": "secondary"
+      }
+    },
+    {
+      "type": "GroupBox",
+      "id": 1000,
+      "properties": { "hidden": true, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        {
+          "type": "VStack",
+          "properties": { "alignment": "leading", "spacing": 6, "frame": { "maxWidth": "infinity" } },
+          "children": [
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1001, "properties": { "text": "", "font": "headline" } },
+                { "type": "Spacer" },
+                { "type": "Text", "id": 1002, "properties": { "text": "", "font": "caption" } },
+                { "type": "Button", "id": 1006, "properties": { "systemImage": "info.circle", "buttonStyle": "borderless", "help": "Model details, source, and license", "actionID": "interp.models.info" } }
+              ]
+            },
+            { "type": "Text", "id": 1003, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1004, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+                { "type": "Spacer" },
+                { "type": "Button", "id": 1005, "properties": { "title": "Download", "buttonStyle": "borderedProminent", "actionID": "interp.model.download" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "GroupBox",
+      "id": 1010,
+      "properties": { "hidden": true, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        {
+          "type": "VStack",
+          "properties": { "alignment": "leading", "spacing": 6, "frame": { "maxWidth": "infinity" } },
+          "children": [
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1011, "properties": { "text": "", "font": "headline" } },
+                { "type": "Spacer" },
+                { "type": "Text", "id": 1012, "properties": { "text": "", "font": "caption" } },
+                { "type": "Button", "id": 1016, "properties": { "systemImage": "info.circle", "buttonStyle": "borderless", "help": "Model details, source, and license", "actionID": "interp.models.info" } }
+              ]
+            },
+            { "type": "Text", "id": 1013, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1014, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+                { "type": "Spacer" },
+                { "type": "Button", "id": 1015, "properties": { "title": "Download", "buttonStyle": "borderedProminent", "actionID": "interp.model.download" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "GroupBox",
+      "id": 1020,
+      "properties": { "hidden": true, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        {
+          "type": "VStack",
+          "properties": { "alignment": "leading", "spacing": 6, "frame": { "maxWidth": "infinity" } },
+          "children": [
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1021, "properties": { "text": "", "font": "headline" } },
+                { "type": "Spacer" },
+                { "type": "Text", "id": 1022, "properties": { "text": "", "font": "caption" } },
+                { "type": "Button", "id": 1026, "properties": { "systemImage": "info.circle", "buttonStyle": "borderless", "help": "Model details, source, and license", "actionID": "interp.models.info" } }
+              ]
+            },
+            { "type": "Text", "id": 1023, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+            {
+              "type": "HStack",
+              "properties": { "spacing": 8 },
+              "children": [
+                { "type": "Text", "id": 1024, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary" } },
+                { "type": "Spacer" },
+                { "type": "Button", "id": 1025, "properties": { "title": "Download", "buttonStyle": "borderedProminent", "actionID": "interp.model.download" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    { "type": "Spacer" },
+    {
+      "type": "Text",
+      "id": 903,
+      "properties": {
+        "markdown": "TranslateGemma is a Google Gemma model, used under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and [Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy).",
+        "font": "caption",
+        "foregroundStyle": "secondary"
+      }
+    },
+    { "type": "Divider" },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        { "type": "Text", "id": 910, "properties": { "text": "", "font": "caption", "foregroundStyle": "secondary", "frame": { "maxWidth": "infinity", "alignment": "leading" } } },
+        { "type": "Button", "id": 930, "properties": { "title": "Refresh", "buttonStyle": "bordered", "actionID": "interp.models.refresh" } },
+        { "type": "Button", "id": 920, "properties": { "title": "Done", "buttonStyle": "borderedProminent", "role": "cancel", "keyboardShortcut": { "key": "escape" }, "actionID": "interp.models.done" } }
+      ]
+    }
+  ]
+}

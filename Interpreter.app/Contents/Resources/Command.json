@@ -47,19 +47,6 @@
     },
     {
       "NAME": "Interpreter",
-      "COMMAND_ID": "interp.copy",
-      "EXECUTION_MODE": "exe_script_file",
-      "ENVIRONMENT_VARIABLES": {
-        "OMC_ACTIONUI_VIEW_200_VALUE": ""
-      }
-    },
-    {
-      "NAME": "Interpreter",
-      "COMMAND_ID": "interp.clear",
-      "EXECUTION_MODE": "exe_script_file"
-    },
-    {
-      "NAME": "Interpreter",
       "COMMAND_ID": "interp.from.changed",
       "EXECUTION_MODE": "exe_script_file",
       "ENVIRONMENT_VARIABLES": {
@@ -73,6 +60,62 @@
       "ENVIRONMENT_VARIABLES": {
         "OMC_ACTIONUI_VIEW_21_VALUE": ""
       }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.model.changed",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_25_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "models.window",
+        "WINDOW_TITLE": "Translation Models",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.models.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.models.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.model.download",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_TRIGGER_VIEW_ID": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.info",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_TRIGGER_VIEW_ID": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.refresh",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.done",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.cancel",
+      "EXECUTION_MODE": "exe_script_file"
     },
     {
       "NAME": "Interpreter",

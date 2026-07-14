@@ -29,7 +29,8 @@ bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf
 # (reset at each array-element header `N => {`) to avoid double-counting the weights. Prints 0
 # on failure / nonexistent repo.
 hf_repo_size_bytes() {   # $1 = author/name
-    /usr/bin/curl -fsSL "https://huggingface.co/api/models/$1/tree/main?recursive=true" 2>/dev/null \
+    /usr/bin/curl -fsSL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
+        "https://huggingface.co/api/models/$1/tree/main?recursive=true" 2>/dev/null \
         | /usr/bin/plutil -p - 2>/dev/null \
         | /usr/bin/awk '
             /^[[:space:]]*[0-9]+ => \{/ { counted=0 }
@@ -39,7 +40,8 @@ hf_repo_size_bytes() {   # $1 = author/name
 
 # Fetch each candidate's size into a cache file "name<TAB>size_bytes" (existing repos only).
 interp_fetch_catalog() {   # $1 = output cache file
-    _out="$1"; : > "$_out"
+    local _out="$1" _name _sz
+    : > "$_out"
     for _name in $INTERP_CANDIDATES; do
         _sz=$(hf_repo_size_bytes "$HF_AUTHOR/$_name")
         [ -n "$_sz" ] && [ "$_sz" -gt 0 ] 2>/dev/null || continue
@@ -58,8 +60,14 @@ interp_fetch_catalog() {   # $1 = output cache file
 # weights gate - and leave the OS room). HEAVY (a caveat, still offered) if peak > 70% R.
 # COMFORTABLE (eligible to be the recommended pick) if peak <= 55% R.
 interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
-    _cache="$1"; [ -s "$_cache" ] || return 1
+    local _cache="$1" _ram _rows _tier _idx _rec _heavy _repo _size _desc
+    [ -s "$_cache" ] || return 1
     _ram=$(machine_ram_bytes); [ "$_ram" -gt 0 ] 2>/dev/null || return 1
+
+    # Per-process side channel for the awk-emitted ROW records: two concurrent curations (a fast
+    # double-Refresh, or a reopen mid-load) would otherwise both write and read this one fixed
+    # file and see each other's truncated rows.
+    _rows="${_cache}.$$.rows"
 
     /usr/bin/awk -F'\t' -v ram="$_ram" '
         function peak(sz) { return sz*1.15 + 1500000000 }
@@ -80,9 +88,9 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
             if (!(faster in seen) && faster!=bal && faster!=best) print "faster\t" faster "\t0\t" heavy_of[faster]
             for (i=1;i<=N;i++) print "ROW\t" i "\t" name[i] "\t" size[i] > "/dev/stderr"
         }
-    ' "$_cache" 2>"${_cache}.rows" | while IFS='	' read -r _tier _idx _rec _heavy; do
-        _repo=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $3; exit}' "${_cache}.rows")
-        _size=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $4; exit}' "${_cache}.rows")
+    ' "$_cache" 2>"$_rows" | while IFS='	' read -r _tier _idx _rec _heavy; do
+        _repo=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $3; exit}' "$_rows")
+        _size=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $4; exit}' "$_rows")
         case "$_tier" in
             best)
                 if [ "$_heavy" = 1 ]; then
@@ -96,5 +104,5 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$_tier" "$_repo" "$(model_short_label "$_repo")" "$_size" "$_rec" "$_heavy" "$_desc"
     done
-    /bin/rm -f "${_cache}.rows"
+    /bin/rm -f "$_rows"
 }

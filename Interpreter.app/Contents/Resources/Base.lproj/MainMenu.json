@@ -2,8 +2,15 @@
   {
     "type": "CommandMenu",
     "properties": {
-      "name": "Commands",
-      "autoPopulate": true
-    }
+      "name": "Models"
+    },
+    "children": [
+      { "type": "Button",
+        "properties": {
+          "title": "Download models...",
+          "actionID": "interp.models"
+        }
+      }
+    ]
   }
 ]

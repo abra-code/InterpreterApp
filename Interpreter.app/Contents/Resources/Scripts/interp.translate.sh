@@ -23,7 +23,6 @@ trap '/bin/rmdir "$spool/dispatch.lock" 2>/dev/null' EXIT
 
 # Snappy UI transition (the poller also does this once it observes "mapping").
 disable_ctrl "$TRANSLATE_BTN"
-disable_ctrl "$CLEAR_BTN"
 disable_ctrl "$SWAP_BTN"
 enable_ctrl "$STOP_BTN"
 
@@ -36,7 +35,7 @@ tgt_code=""
 [ -n "$from_idx" ] && src_code=$(/usr/bin/sed -n "${from_idx}p" "$spool/langcodes")
 [ -n "$to_idx" ] && tgt_code=$(/usr/bin/sed -n "${to_idx}p" "$spool/langcodes")
 if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
-    enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$CLEAR_BTN"; enable_ctrl "$SWAP_BTN"
+    enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
     disable_ctrl "$STOP_BTN"
     set_status "Please choose valid From and To languages."
     exit 0
@@ -64,6 +63,17 @@ srcfile="source.${epoch}.txt"
 /bin/cat > "$spool/job.json.tmp" <<EOF
 {"epoch":$epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$srcfile","messages":[{"role":"user","content":[{"type":"text","source_lang_code":"$src_code","target_lang_code":"$tgt_code","text":"{{chunk}}"}]}]}
 EOF
+# Erase the previous translation from the target pane immediately (a new job starts now). We
+# clear the editor directly and drop the stale result.txt so the poller re-pushes only once the
+# broker writes fresh output. This is why the app needs no explicit Clear button.
+/bin/rm -f "$spool/result.txt"
+/usr/bin/printf '' | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
+
+# Timing: stamp the dispatch moment (high-resolution) and clear any previous result's elapsed,
+# so the poller can report how long this translation took when it observes "done".
+/bin/rm -f "$spool/translate.elapsed"
+/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$spool/translate.start" 2>/dev/null
+
 /bin/mv "$spool/job.json.tmp" "$spool/job.json"
 
 set_status "Translating…"
