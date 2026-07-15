@@ -19,6 +19,7 @@ window_uuid="${OMC_ACTIONUI_WINDOW_UUID:-}"
 RESOURCES_DIR="$OMC_APP_BUNDLE_PATH/Contents/Resources"
 SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
 AGENT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent"
+PDFTEXT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/pdftext"
 
 # App support layout.
 APP_SUPPORT="$HOME/Library/Application Support/Interpreter"
@@ -225,15 +226,41 @@ EOF
     /bin/mv "$_spool/job.json.tmp" "$_spool/job.json"
 }
 
-# Convert a document to plain UTF-8 text via textutil, writing it to $2. Returns 0 on a real
-# conversion, non-zero when the document could not be read.
+# True if the file carries the PDF signature "%PDF-" near its start. Detection is by content, not
+# extension, so a PDF dropped or sent to the service without a .pdf suffix is still routed here. PDF
+# readers - including the PDFKit helper this routes to - tolerate a few leading bytes before the
+# header (a prepended BOM, stray whitespace, mail/gateway mangling), so we scan the first 1 KB rather
+# than requiring the signature at offset 0: missing it would send a real PDF to textutil, which
+# silently misreads the bytes as text and produces garbage. Scanning the same window PDFKit does
+# keeps the two in agreement. A non-PDF that merely contains "%PDF-" early routes to the helper and
+# fails cleanly ("can't read") instead of translating garbage, so the false-positive direction is safe.
+is_pdf() {   # $1 = path
+    /usr/bin/head -c 1024 "$1" 2>/dev/null | LC_ALL=C /usr/bin/grep -qa '%PDF-'
+}
+
+# Reject glyph-mapping garbage from a PDF whose fonts lack a usable ToUnicode map: such a PDF
+# extracts as a single placeholder glyph repeated (PDFKit emits U+00FF, or the replacement char), so
+# one character dominates the output, whereas real text - in any script - never concentrates on a
+# single character. The analysis lives in pdf_text_usable.pl (a separate file, not composed inline
+# here); it returns 0 for usable text and non-zero for garbage. Runs once per dispatch.
+pdf_text_is_usable() {   # $1 = extracted text file
+    /usr/bin/perl "$SCRIPTS_DIR/pdf_text_usable.pl" "$1" 2>/dev/null
+}
+
+# Convert a document to plain UTF-8 text, writing it to $2. Returns 0 on a real conversion, non-zero
+# when the document could not be read.
 #
-# Plain-text inputs are deliberately NOT short-circuited (copied) - they go through textutil too,
-# because the translation pipeline needs UTF-8 and textutil normalizes to it: a UTF-16/BOM'd .txt
-# (common from Windows) is correctly transcoded, whereas a raw copy would hand the model UTF-16
-# bytes. -encoding UTF-8 pins the OUTPUT encoding so the result is UTF-8 regardless of the OS/locale
-# default. (textutil still can't reliably detect a BOM-less non-UTF-8 single-byte input and may
-# mis-transcode it - but a copy would not fix that either, only break it differently.)
+# PDF is handled by the bundled PDFKit helper (pdftext), NOT textutil: textutil cannot parse PDF and
+# silently misreads the raw bytes as plain text, emitting binary garbage. A helper failure (cannot
+# open / locked / no text layer, i.e. a scanned image-only PDF) or output that does not survive the
+# garbage gate above is treated as a convert failure. Its output is already UTF-8.
+#
+# Everything else goes through textutil. Plain-text inputs are deliberately NOT short-circuited
+# (copied) - they go through textutil too, because the translation pipeline needs UTF-8 and textutil
+# normalizes to it: a UTF-16/BOM'd .txt (common from Windows) is correctly transcoded, whereas a raw
+# copy would hand the model UTF-16 bytes. -encoding UTF-8 pins the OUTPUT encoding so the result is
+# UTF-8 regardless of the OS/locale default. (textutil still can't reliably detect a BOM-less
+# non-UTF-8 single-byte input and may mis-transcode it - but a copy would not fix that either.)
 #
 # textutil's OWN exit status is unusable: it returns 0 even for a file it cannot read - e.g. a
 # .pages package yields "The file isn't in the correct format." on stderr and writes NO output while
@@ -244,6 +271,13 @@ EOF
 # translate".
 convert_to_plain_text() {   # $1 = input path, $2 = output file
     /bin/rm -f "$2"
+
+    if is_pdf "$1"; then
+        "$PDFTEXT_BIN" "$1" > "$2" 2>/dev/null || { /bin/rm -f "$2"; return 1; }
+        pdf_text_is_usable "$2" || { /bin/rm -f "$2"; return 1; }
+        return 0
+    fi
+
     local _err=$(/usr/bin/textutil -convert txt -encoding UTF-8 -output "$2" "$1" 2>&1 >/dev/null)
     [ -z "$_err" ] && [ -f "$2" ]
 }

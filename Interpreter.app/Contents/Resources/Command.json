@@ -33,6 +33,7 @@
         "ALLOW_MULTIPLE_ITEMS": false,
         "ALLOWED_CONTENT_TYPES": [
           "public.text",
+          "com.adobe.pdf",
           "com.apple.rtfd",
           "com.microsoft.word.doc",
           "org.openxmlformats.wordprocessingml.document",

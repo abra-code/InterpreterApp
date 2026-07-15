@@ -51,6 +51,8 @@ APP_BUNDLE=""
 for _c in "$SCRIPT_DIR"/*.app; do [ -d "$_c" ] && { APP_BUNDLE="$_c"; break; }; done
 [ -n "$APP_BUNDLE" ] || fail "No .app bundle found in $SCRIPT_DIR"
 MLX_DIR="$APP_BUNDLE/Contents/Support/MLX"
+SUPPORT_DIR="$APP_BUNDLE/Contents/Support"
+PDFTEXT_SRC="$SCRIPT_DIR/Tools/pdftext.swift"
 
 # Locate the mlx-agent repo: env override, sibling dir, then ~/Development/mlx-agent.
 if [ -z "$AGENT_REPO" ]; then
@@ -95,11 +97,25 @@ done
 [ -f "$MLX_DIR/$required_bundle/Contents/Resources/default.metallib" ] || fail "default.metallib not found after copy."
 echo "  ${GREEN}Deployed${RESET} mlx-agent + metallib"
 
+# ── 2b. Build the pdftext helper ──────────────────────────────────────────
+# Small single-file Swift tool (system frameworks only: PDFKit + Foundation) used by
+# convert_to_plain_text for PDF inputs, which textutil cannot read. Compiled straight into
+# Contents/Support/pdftext. No Metal, so a plain swiftc compile is enough (no xcodebuild).
+if [ "$DO_BUILD" = "yes" ]; then
+    [ -f "$PDFTEXT_SRC" ] || fail "pdftext source not found: $PDFTEXT_SRC"
+    /usr/bin/xcrun swiftc -O -target "${ARCH}-apple-macos14.6" -o "$SUPPORT_DIR/pdftext" "$PDFTEXT_SRC" \
+        || fail "swiftc failed to build pdftext"
+    /bin/chmod +x "$SUPPORT_DIR/pdftext"
+    echo "  ${GREEN}Built${RESET} pdftext"
+fi
+[ -x "$SUPPORT_DIR/pdftext" ] || fail "No pdftext at $SUPPORT_DIR/pdftext (build first, or drop --skip-build)."
+
 # ── 3. Codesign ───────────────────────────────────────────────────────────
 if [ "$DO_CODESIGN" = "yes" ]; then
     for target in \
         "$MLX_DIR/mlx-swift_Cmlx.bundle" "$MLX_DIR/swift-crypto_Crypto.bundle" \
-        "$MLX_DIR/swift-transformers_Hub.bundle" "$MLX_DIR/mlx-agent"; do
+        "$MLX_DIR/swift-transformers_Hub.bundle" "$MLX_DIR/mlx-agent" \
+        "$SUPPORT_DIR/pdftext"; do
         [ -e "$target" ] || continue
         /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$target" >/dev/null 2>&1 \
             && echo "  signed $(basename "$target")" || echo "${RED}  FAILED $(basename "$target")${RESET}"
@@ -114,6 +130,14 @@ if ( cd "$MLX_DIR" && ./mlx-agent 2>&1 ) | /usr/bin/grep -q -- "map "; then
     echo "  ${GREEN}Verify OK${RESET}: mlx-agent launches and lists the 'map' mode"
 else
     fail "mlx-agent did not report 'map' mode - stale binary or a dylib load failure."
+fi
+
+# pdftext with no args prints usage and exits 2; that proves the binary loads (PDFKit linked).
+"$SUPPORT_DIR/pdftext" >/dev/null 2>&1; pt_rc=$?
+if [ "$pt_rc" = 2 ]; then
+    echo "  ${GREEN}Verify OK${RESET}: pdftext launches"
+else
+    fail "pdftext did not launch (exit $pt_rc) - build/link failure."
 fi
 
 echo

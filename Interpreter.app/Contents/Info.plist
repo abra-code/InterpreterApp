@@ -95,6 +95,7 @@
 			<key>NSSendFileTypes</key>
 			<array>
 				<string>public.text</string>
+				<string>com.adobe.pdf</string>
 				<string>com.apple.rtfd</string>
 				<string>com.microsoft.word.doc</string>
 				<string>org.openxmlformats.wordprocessingml.document</string>
