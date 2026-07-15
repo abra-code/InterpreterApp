@@ -32,12 +32,11 @@
         "MESSAGE": "Choose a document to translate",
         "ALLOW_MULTIPLE_ITEMS": false,
         "ALLOWED_CONTENT_TYPES": [
-          "public.plain-text",
-          "public.rtf",
+          "public.text",
           "com.apple.rtfd",
-          "public.html",
           "com.microsoft.word.doc",
           "org.openxmlformats.wordprocessingml.document",
+          "com.microsoft.word.wordml",
           "org.oasis-open.opendocument.text",
           "com.apple.webarchive"
         ]

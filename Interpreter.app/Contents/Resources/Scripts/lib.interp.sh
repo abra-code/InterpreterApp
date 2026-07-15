@@ -71,6 +71,10 @@ set_status()   { "$dialog" "$window_uuid" "$STATUS_TEXT" "$1"; }
 enable_ctrl()  { "$dialog" "$window_uuid" "$1" omc_enable; }
 disable_ctrl() { "$dialog" "$window_uuid" "$1" omc_disable; }
 
+# Present a modal alert over this window (ActionUI/OMC omc_present_alert): title, message, one OK
+# button. Use this for errors the user must see now, rather than only leaving a status-line trace.
+present_alert() { "$dialog" "$window_uuid" omc_window omc_present_alert "$1" "$2" "OK::"; }
+
 # Resolve the model directory: the first translategemma-* dir under Models with a config.json,
 # else any model dir with a config.json. Symlinks are resolved (the weight loader needs a real
 # path). Prints the resolved path and returns 0, or returns 1 when no model is present.
@@ -162,13 +166,13 @@ resolve_lang_code() {   # $1 = spool, $2 = 1-based index
 # From/To are looked up by code (en/es) rather than assumed positions, since the list is sorted.
 populate_language_pickers() {   # $1 = spool
     local _spool="$1"
-    local _tab _sorted _opts _first _name _code
-    _tab=$(/usr/bin/printf '\t')
-    _sorted="$_spool/languages.sorted.tsv"
+    local _tab=$(/usr/bin/printf '\t')
+    local _sorted="$_spool/languages.sorted.tsv"
+    local _opts="["
+    local _first=1
+    local _name _code
     LC_ALL=C /usr/bin/sort -f "$RESOURCES_DIR/languages.tsv" > "$_sorted"
     /bin/rm -f "$_spool/langcodes"
-    _opts="["
-    _first=1
     while IFS="$_tab" read -r _name _code; do
         [ -n "$_name" ] || continue
         [ -n "$_code" ] || continue
@@ -181,13 +185,12 @@ populate_language_pickers() {   # $1 = spool
     "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_opts"
     "$dialog" "$window_uuid" "$TO_PICKER" omc_set_property "options" "$_opts"
 
-    local _nlangs _default_from _default_to _saved_from _saved_to
-    _nlangs=$(/usr/bin/wc -l < "$_spool/langcodes" | /usr/bin/tr -d ' ')
+    local _nlangs=$(/usr/bin/wc -l < "$_spool/langcodes" | /usr/bin/tr -d ' ')
     [ -n "$_nlangs" ] && [ "$_nlangs" -ge 1 ] 2>/dev/null || _nlangs=1
-    _default_from=$(lang_code_index "$_spool" en); case "$_default_from" in ''|*[!0-9]*) _default_from=1 ;; esac
-    _default_to=$(lang_code_index "$_spool" es);   case "$_default_to"   in ''|*[!0-9]*) _default_to=$_default_from ;; esac
-    _saved_from=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
-    _saved_to=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
+    local _default_from=$(lang_code_index "$_spool" en); case "$_default_from" in ''|*[!0-9]*) _default_from=1 ;; esac
+    local _default_to=$(lang_code_index "$_spool" es);   case "$_default_to"   in ''|*[!0-9]*) _default_to=$_default_from ;; esac
+    local _saved_from=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
+    local _saved_to=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
     case "$_saved_from" in ''|*[!0-9]*) _saved_from=$_default_from ;; esac
     case "$_saved_to" in ''|*[!0-9]*) _saved_to=$_default_to ;; esac
     [ "$_saved_from" -ge 1 ] && [ "$_saved_from" -le "$_nlangs" ] 2>/dev/null || _saved_from=$_default_from
@@ -202,13 +205,13 @@ populate_language_pickers() {   # $1 = spool
 # a rapid re-dispatch can never pair one job's text with another job's language metadata; job.json
 # then carries only fixed, safe values. Callers hold the dispatch lock and own the UI transitions.
 publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; source text on STDIN
-    local _spool="$1" _from="$2" _to="$3" _epoch _srcfile
-    _epoch=$(pb_get "interp_epoch_${window_uuid}")
+    local _spool="$1" _from="$2" _to="$3"
+    local _epoch=$(pb_get "interp_epoch_${window_uuid}")
     case "$_epoch" in ''|*[!0-9]*) _epoch=0 ;; esac
     _epoch=$((_epoch + 1))
     pb_set "interp_epoch_${window_uuid}" "$_epoch"
 
-    _srcfile="source.${_epoch}.txt"
+    local _srcfile="source.${_epoch}.txt"
     /bin/cat > "$_spool/$_srcfile"
 
     /bin/cat > "$_spool/job.json.tmp" <<EOF
@@ -222,10 +225,27 @@ EOF
     /bin/mv "$_spool/job.json.tmp" "$_spool/job.json"
 }
 
-# Convert a document to plain text via textutil. Returns textutil's exit status (non-zero on an
-# unsupported/damaged file). Plain-text and rich inputs alike pass through -convert txt.
+# Convert a document to plain UTF-8 text via textutil, writing it to $2. Returns 0 on a real
+# conversion, non-zero when the document could not be read.
+#
+# Plain-text inputs are deliberately NOT short-circuited (copied) - they go through textutil too,
+# because the translation pipeline needs UTF-8 and textutil normalizes to it: a UTF-16/BOM'd .txt
+# (common from Windows) is correctly transcoded, whereas a raw copy would hand the model UTF-16
+# bytes. -encoding UTF-8 pins the OUTPUT encoding so the result is UTF-8 regardless of the OS/locale
+# default. (textutil still can't reliably detect a BOM-less non-UTF-8 single-byte input and may
+# mis-transcode it - but a copy would not fix that either, only break it differently.)
+#
+# textutil's OWN exit status is unusable: it returns 0 even for a file it cannot read - e.g. a
+# .pages package yields "The file isn't in the correct format." on stderr and writes NO output while
+# still exiting 0 - so we judge success by the real signals instead: a conversion FAILED if textutil
+# emitted any diagnostic on stderr, or produced no output file. A stale $2 from a prior attempt is
+# removed first so a missing file is detectable. A readable-but-empty document still succeeds here
+# (an empty output file); the caller's whitespace check reports that separately as "nothing to
+# translate".
 convert_to_plain_text() {   # $1 = input path, $2 = output file
-    /usr/bin/textutil -convert txt -output "$2" "$1" 2>/dev/null
+    /bin/rm -f "$2"
+    local _err=$(/usr/bin/textutil -convert txt -encoding UTF-8 -output "$2" "$1" 2>&1 >/dev/null)
+    [ -z "$_err" ] && [ -f "$2" ]
 }
 
 # Default translated-output path for an input document: "<name-no-ext>-translated.txt" next to the

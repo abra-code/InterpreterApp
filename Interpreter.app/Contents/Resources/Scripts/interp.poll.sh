@@ -65,7 +65,9 @@ sync_models() {
     # Auto-select: if nothing is chosen yet, or the chosen model is gone, pick the first
     # installed one. This is the first-run / post-download pickup path.
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
-    if [ -z "$_sel" ] || ! /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null; then
+    local _sel_known=0
+    [ -n "$_sel" ] && /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null && _sel_known=1
+    if [ "$_sel_known" = 0 ]; then
         _sel="$(/usr/bin/head -1 "$spool/modelpaths" 2>/dev/null)"
         if [ -n "$_sel" ]; then
             /usr/bin/printf '%s' "$_sel" > "$spool/model.dir.tmp" && /bin/mv "$spool/model.dir.tmp" "$spool/model.dir"
@@ -240,18 +242,19 @@ reflect_result() {
         # job's mid-write result.txt and ship truncated output - gate on the status epoch matching
         # the current job.json epoch so only THIS job's completion delivers. LAST_RESULT_SIG stays
         # unset until we act, so this fires on the completing tick.
-        local _st _ep _jep _out
-        _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+        local _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
         [ "$_st" = done ] || return 0
-        _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
-        _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
+        local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
+        local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
         [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
-        _out="$(/bin/cat "$spool/output.path" 2>/dev/null)"
+        local _out="$(/bin/cat "$spool/output.path" 2>/dev/null)"
         [ -n "$_out" ] || return 0
         # Write atomically. Commit LAST_RESULT_SIG only after acting (success OR a surfaced error),
         # never before the write - otherwise a write failure is silently masked by reflect_ui's
         # independent "Ready" and the user believes a file was saved that was not.
-        if /bin/cat "$spool/result.txt" > "$_out.part.$$" 2>/dev/null && /bin/mv "$_out.part.$$" "$_out" 2>/dev/null; then
+        /bin/cat "$spool/result.txt" > "$_out.part.$$" 2>/dev/null && /bin/mv "$_out.part.$$" "$_out" 2>/dev/null
+        local _write_rc=$?
+        if [ "$_write_rc" -eq 0 ]; then
             LAST_RESULT_SIG="$_rsig"
             "$dialog" "$window_uuid" "$QL_OUTPUT" "$_out"
             enable_ctrl "$REVEAL_OUTPUT_BTN"

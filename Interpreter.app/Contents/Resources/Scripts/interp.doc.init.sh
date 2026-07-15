@@ -42,7 +42,8 @@ fi
 
 # First run (no model installed yet): open the model chooser over this window so the user can
 # download one. The poller keeps this window's status/picker in sync meanwhile.
-if ! resolve_model_dir >/dev/null 2>&1; then
+model_dir=$(resolve_model_dir 2>/dev/null)
+if [ -z "$model_dir" ]; then
     "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.models"
 fi
 

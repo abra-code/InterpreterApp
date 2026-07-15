@@ -91,7 +91,9 @@ trap - TERM INT
 # --- install: move into place atomically, drop the Gemma NOTICE beside it ----
 set_state installing
 /bin/rm -rf "$dest"
-if /bin/mv "$staging" "$dest"; then
+/bin/mv "$staging" "$dest"
+mv_rc=$?
+if [ "$mv_rc" -eq 0 ]; then
     /bin/cat > "$dest/NOTICE.txt" <<'NOTICE'
 Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
 

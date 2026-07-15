@@ -18,14 +18,18 @@ cat_tmp="$CACHE_DIR/catalog.$$.tsv"
 cur_tmp="$CACHE_DIR/curated.$$.tsv"
 /bin/rm -f "$cat_tmp" "$cur_tmp"
 
-if ! interp_fetch_catalog "$cat_tmp"; then
+interp_fetch_catalog "$cat_tmp"
+fetch_rc=$?
+if [ "$fetch_rc" -ne 0 ]; then
     /bin/rm -f "$cat_tmp"
     "$dialog" "$window_uuid" 910 "Could not reach the model catalog. Check your connection and click Refresh."
     exit 0
 fi
 /bin/mv "$cat_tmp" "$CACHE_DIR/catalog.tsv"
 
-if ! interp_curate_models "$CACHE_DIR/catalog.tsv" > "$cur_tmp" || [ ! -s "$cur_tmp" ]; then
+interp_curate_models "$CACHE_DIR/catalog.tsv" > "$cur_tmp"
+curate_rc=$?
+if [ "$curate_rc" -ne 0 ] || [ ! -s "$cur_tmp" ]; then
     /bin/rm -f "$cur_tmp"
     "$dialog" "$window_uuid" 910 "No suitable model fits this Mac's memory. Click Refresh to try again."
     exit 0

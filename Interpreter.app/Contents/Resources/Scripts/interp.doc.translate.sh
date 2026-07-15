@@ -36,16 +36,32 @@ if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     exit 0
 fi
 
-# Convert the document to plain text. A failure here means an unsupported/damaged file.
+# Convert the document to plain text. convert_to_plain_text judges real readability (textutil's own
+# exit status lies - it returns 0 for an unreadable .pages/other package while writing nothing), so
+# a non-zero return here means an unsupported or damaged file. Surface that as a modal alert now
+# (not just a status-line trace) so the failure is not mistaken later for "no text to translate".
 conv="$spool/input.plain.txt"
-if ! convert_to_plain_text "$inp" "$conv"; then
+convert_to_plain_text "$inp" "$conv"
+convert_rc=$?
+if [ "$convert_rc" -ne 0 ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
-    set_status "Could not read this document (unsupported or damaged)."
+    set_status "Could not read this document."
+    present_alert "Can't read this document" "Interpreter could not read this document:
+
+$inp
+
+It may be in a format that is not supported, or the file may be damaged."
     exit 0
 fi
-if ! /usr/bin/grep -q '[^[:space:]]' "$conv" 2>/dev/null; then
+
+# Guard an empty conversion: a genuinely blank document, or a textutil that exited 0 yet produced
+# no usable text. Either way there is nothing to translate - say so in a modal alert.
+/usr/bin/grep -q '[^[:space:]]' "$conv" 2>/dev/null
+has_text_rc=$?
+if [ "$has_text_rc" -ne 0 ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
-    set_status "The document has no text to translate."
+    set_status "No text to translate."
+    present_alert "Nothing to translate" "This document has no readable text to translate."
     exit 0
 fi
 

@@ -60,14 +60,14 @@ interp_fetch_catalog() {   # $1 = output cache file
 # weights gate - and leave the OS room). HEAVY (a caveat, still offered) if peak > 70% R.
 # COMFORTABLE (eligible to be the recommended pick) if peak <= 55% R.
 interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
-    local _cache="$1" _ram _rows _tier _idx _rec _heavy _repo _size _desc
+    local _cache="$1" _tier _idx _rec _heavy _repo _size _desc
     [ -s "$_cache" ] || return 1
-    _ram=$(machine_ram_bytes); [ "$_ram" -gt 0 ] 2>/dev/null || return 1
+    local _ram=$(machine_ram_bytes); [ "$_ram" -gt 0 ] 2>/dev/null || return 1
 
     # Per-process side channel for the awk-emitted ROW records: two concurrent curations (a fast
     # double-Refresh, or a reopen mid-load) would otherwise both write and read this one fixed
     # file and see each other's truncated rows.
-    _rows="${_cache}.$$.rows"
+    local _rows="${_cache}.$$.rows"
 
     /usr/bin/awk -F'\t' -v ram="$_ram" '
         function peak(sz) { return sz*1.15 + 1500000000 }

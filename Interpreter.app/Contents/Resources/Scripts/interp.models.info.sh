@@ -48,6 +48,6 @@ Gemma is provided under and subject to the Gemma Terms of Use found at ai.google
 
 Use is also subject to the Gemma Prohibited Use Policy at ai.google.dev/gemma/prohibited_use_policy."
 
-"$dialog" "$window_uuid" omc_window omc_present_alert "Model details" "$msg" "OK::"
+present_alert "Model details" "$msg"
 
 exit 0
