@@ -4,8 +4,9 @@
 # Trimmed from MLXChat's update script: Interpreter needs ONLY the mlx-agent binary and its
 # resource bundles (no replay, no MCP packages, no embedded Python).
 #
-# Steps: (1) build mlx-agent via xcodebuild (Metal shaders need the xcode build, not
-# `swift build`), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
+# Steps: (1) build mlx-agent via xcodebuild (Metal shaders need the xcode build; there is no
+# longer a Package.swift to `swift build` at all, and the products land in the repo's
+# `build/` derived-data dir), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
 # bundles) to Contents/Support/MLX/, (3) ad-hoc codesign the copied binaries and the app,
 # (4) verify the deployed agent launches and is the new build (its usage lists `map`).
 #
@@ -55,13 +56,16 @@ SUPPORT_DIR="$APP_BUNDLE/Contents/Support"
 PDFTEXT_SRC="$SCRIPT_DIR/Tools/pdftext.swift"
 
 # Locate the mlx-agent repo: env override, sibling dir, then ~/Development/mlx-agent.
+# Identified by the Xcode PROJECT, not Package.swift: mlx-agent dropped its package manifest
+# when it moved to an XcodeGen-generated project (the Metal shaders forced xcodebuild, and
+# two manifests meant two dependency graphs that could drift). The .xcodeproj is committed.
 if [ -z "$AGENT_REPO" ]; then
     for _cand in "$SCRIPT_DIR/../mlx-agent" "$HOME/Development/mlx-agent"; do
-        [ -f "$_cand/Package.swift" ] && { AGENT_REPO="$(cd "$_cand" && pwd)"; break; }
+        [ -d "$_cand/mlx-agent.xcodeproj" ] && { AGENT_REPO="$(cd "$_cand" && pwd)"; break; }
     done
 fi
-[ -n "$AGENT_REPO" ] && [ -f "$AGENT_REPO/Package.swift" ] || fail "mlx-agent repo not found; pass --agent-repo=PATH"
-AGENT_BUILD_DIR="$AGENT_REPO/.build/xcode/Build/Products/$CONFIG"
+[ -n "$AGENT_REPO" ] && [ -d "$AGENT_REPO/mlx-agent.xcodeproj" ] || fail "mlx-agent repo not found (looked for mlx-agent.xcodeproj); pass --agent-repo=PATH"
+AGENT_BUILD_DIR="$AGENT_REPO/build/Build/Products/$CONFIG"
 
 echo
 echo "==== Updating $(basename "$APP_BUNDLE") ($CONFIG, $ARCH) ===="
@@ -73,8 +77,8 @@ echo
 if [ "$DO_BUILD" = "yes" ]; then
     /usr/bin/xcrun --find metal >/dev/null 2>&1 || fail "Metal toolchain missing. Install once: xcodebuild -downloadComponent MetalToolchain"
     echo "  Building mlx-agent (compiles Metal shaders)..."
-    ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -scheme mlx-agent \
-        -destination "platform=macOS,arch=$ARCH" -derivedDataPath .build/xcode \
+    ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -project mlx-agent.xcodeproj -scheme mlx-agent \
+        -destination "platform=macOS,arch=$ARCH" -derivedDataPath build \
         -configuration "$CONFIG" -skipPackagePluginValidation -skipMacroValidation build ) \
         2>&1 | /usr/bin/grep -iE "error:|BUILD (SUCCEEDED|FAILED)" | /usr/bin/tail -10
     [ "${PIPESTATUS[0]}" = 0 ] || fail "xcodebuild failed."
