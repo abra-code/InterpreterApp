@@ -1,25 +1,26 @@
-# interp.model.download - a tier's Download button was clicked in the chooser. Resolve which
-# tier from the trigger view id, look up its repo in the curated catalog, do a disk preflight,
-# then spawn the background download worker (which streams the files and updates the slot).
+# interp.model.download - a card's Download button was clicked in the chooser. Resolve which
+# curated row from the trigger view id (card ids encode the row - see interp_card_base_id),
+# do a disk preflight, then spawn the background download worker (which streams the files and
+# updates the card via the poller).
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.models.sh"
 
-case "$OMC_ACTIONUI_TRIGGER_VIEW_ID" in
-    1005) tier=best;     size_id=1004; btn_id=1005; badge_id=1002 ;;
-    1015) tier=balanced; size_id=1014; btn_id=1015; badge_id=1012 ;;
-    1025) tier=faster;   size_id=1024; btn_id=1025; badge_id=1022 ;;
-    *) exit 0 ;;
-esac
+case "$OMC_ACTIONUI_TRIGGER_VIEW_ID" in ''|*[!0-9]*) exit 0 ;; esac
+[ "$OMC_ACTIONUI_TRIGGER_VIEW_ID" -gt 2000 ] 2>/dev/null || exit 0
+row=$(interp_card_row_of_id "$OMC_ACTIONUI_TRIGGER_VIEW_ID")
+base=$(interp_card_base_id "$row")
+badge_id=$((base + 2)); size_id=$((base + 4)); btn_id=$((base + 5))
 
 [ -f "$CACHE_DIR/curated.tsv" ] || exit 0
 tab=$(/usr/bin/printf '\t')
-repo=""; size=""
-while IFS="$tab" read -r t r l sz rec heavy desc; do
-    [ "$t" = "$tier" ] || continue
-    repo="$r"; size="$sz"; break
-done < "$CACHE_DIR/curated.tsv"
-[ -n "$repo" ] || exit 0
+line=$(curated_row "$CACHE_DIR/curated.tsv" "$row")
+[ -n "$line" ] || exit 0
+sec=""; fam=""; author=""; repo=""; label=""; size=""; heavy=""; desc=""
+IFS="$tab" read -r sec fam author repo label size heavy desc <<EOF
+$line
+EOF
+[ -n "$repo" ] && [ -n "$author" ] || exit 0
 
 # Already installed (a stale window, or a race): nothing to do.
 if [ -f "$MODELS_DIR/$repo/config.json" ]; then
@@ -58,7 +59,7 @@ fi
 "$dialog" "$window_uuid" "$btn_id" omc_disable
 "$dialog" "$window_uuid" "$size_id" "Preparing download…"
 
-/bin/sh "$SCRIPTS_DIR/interp.download.worker.sh" "$repo" \
+/bin/sh "$SCRIPTS_DIR/interp.download.worker.sh" "$author" "$repo" \
     < /dev/null >> "$DOWNLOADS_DIR/$repo.log" 2>&1 &
 
 exit 0

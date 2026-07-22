@@ -1,13 +1,16 @@
 # interp.models.poll.sh - chooser-scoped download-state poller, one per chooser window. Spawned
 # by interp.models.init. Reflects each model's background download state (written by the
-# UI-decoupled worker) into that tier's slot, so a download's progress shows correctly whether it
-# was started in THIS chooser window or an earlier one that was closed and reopened. Runs until
-# the per-window marker dir disappears (window close / app quit). Not an OMC command.
+# UI-decoupled worker) into that model's CARD, so a download's progress shows correctly whether
+# it was started in THIS chooser window or an earlier one that was closed and reopened. Runs
+# until the per-window marker dir disappears (window close / app quit). Not an OMC command.
 #   args: <chooser_window_uuid>
 #
-# Division of labour: interp.models.load fills the STATIC catalog rows (name, size, description,
-# and the installed badge). This poller only OVERLAYS the dynamic state of an ACTIVE or FAILED
-# download onto a slot; when there is no work dir for a tier it leaves load's static content alone.
+# Division of labour: interp.models.load builds the cards with their STATIC content (name, size,
+# description, and the installed badge). This poller only OVERLAYS the dynamic state of an
+# ACTIVE or FAILED download onto a card; when there is no work dir for a row it leaves load's
+# static content alone. Card view ids derive from the curated row number (interp_card_base_id);
+# load clears this poller's per-row sig files whenever it rebuilds cards, so fresh cards always
+# get a re-push within one tick.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.models.sh"
@@ -16,11 +19,13 @@ window_uuid="$1"
 marker="$DOWNLOADS_DIR/.chooser.$window_uuid"
 tab=$(/usr/bin/printf '\t')
 
-# Reflect one tier's download state. Dedupes via a per-tier sig file in the marker dir so we only
-# push to the UI when the display actually changes.
-reflect_tier() {   # $1=tier $2=repo $3=catalog_size $4=badge_id $5=size_id $6=btn_id
-    local _tier="$1" _repo="$2" _csize="$3" _badge="$4" _sz="$5" _btn="$6"
-    local _work="$DOWNLOADS_DIR/$_repo" _sigf="$marker/$_tier.sig"
+# Reflect one curated row's download state. Dedupes via a per-row sig file in the marker dir so
+# we only push to the UI when the display actually changes.
+reflect_row() {   # $1=row $2=repo $3=catalog_size
+    local _row="$1" _repo="$2" _csize="$3"
+    local _base=$(interp_card_base_id "$_row")
+    local _badge=$((_base + 2)) _sz=$((_base + 4)) _btn=$((_base + 5))
+    local _work="$DOWNLOADS_DIR/$_repo" _sigf="$marker/row.$_row.sig"
     local _state _total _text _btnstate _got _pct _sig
 
     if [ -f "$_work/state" ]; then
@@ -67,12 +72,11 @@ reflect_tier() {   # $1=tier $2=repo $3=catalog_size $4=badge_id $5=size_id $6=b
 
 while [ -d "$marker" ]; do
     if [ -f "$CACHE_DIR/curated.tsv" ]; then
-        while IFS="$tab" read -r _t _repo _label _size _rec _heavy _desc; do
-            case "$_t" in
-                best)     reflect_tier best     "$_repo" "$_size" 1002 1004 1005 ;;
-                balanced) reflect_tier balanced "$_repo" "$_size" 1012 1014 1015 ;;
-                faster)   reflect_tier faster   "$_repo" "$_size" 1022 1024 1025 ;;
-            esac
+        row=0
+        while IFS="$tab" read -r _sec _fam _auth _repo _label _size _heavy _desc; do
+            [ -n "$_sec" ] || continue
+            row=$((row + 1))
+            reflect_row "$row" "$_repo" "$_size"
         done < "$CACHE_DIR/curated.tsv"
     fi
     /bin/sleep 1

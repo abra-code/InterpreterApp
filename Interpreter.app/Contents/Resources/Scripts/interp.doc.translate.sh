@@ -67,7 +67,14 @@ fi
 
 # Publish the job from the converted text (shared with the text window): bumps the epoch, writes
 # the per-epoch source file, builds+publishes job.json, and stamps the dispatch time for timing.
+# Publishing can refuse (a raw-prompt family whose language names cannot be resolved) - restore
+# the UI and say so instead of leaving a silent dead Translate.
 /bin/cat "$conv" | publish_translation_job "$spool" "$src_code" "$tgt_code"
+if [ $? -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "Could not prepare the translation for this model and language pair."
+    exit 0
+fi
 
 set_status "Translating…"
 

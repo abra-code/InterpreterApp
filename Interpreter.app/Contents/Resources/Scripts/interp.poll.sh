@@ -84,6 +84,17 @@ sync_models() {
     fi
 }
 
+# --- keep the language pickers matched to the selected model's family --------
+# populate_language_pickers records the family it populated for (spool/langfamily). When a
+# model switch (user pick, post-download auto-pickup) lands on a DIFFERENT family, re-populate
+# so the pickers only offer languages the new model supports. Selections survive by saved code;
+# a code the new family lacks falls back to en/es inside the populate.
+sync_languages() {
+    local _fam=$(model_family_of "$(/bin/cat "$spool/model.dir" 2>/dev/null)")
+    [ "$_fam" = "$(/bin/cat "$spool/langfamily" 2>/dev/null)" ] && return 0
+    populate_language_pickers "$spool"
+}
+
 # --- ensure one broker is running for the selected model --------------------
 ensure_broker() {
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
@@ -273,6 +284,7 @@ reflect_result() {
 
 while [ -d "$spool" ]; do
     sync_models
+    sync_languages
     ensure_broker
     reflect_ui
     reflect_result

@@ -92,6 +92,18 @@ resolve_model_dir() {
 
 model_label_for() { /usr/bin/basename "$1"; }
 
+# The model FAMILY of an installed dir / repo name, matched case-insensitively on the name:
+# translategemma | milmmt | generic. The family decides how a translation job is composed
+# (chat messages vs raw completion prompt) and how the broker is spawned.
+model_family_of() {   # $1 = model dir path or repo name
+    local _b=$(/usr/bin/basename "$1" | /usr/bin/tr '[:upper:]' '[:lower:]')
+    case "$_b" in
+        *translategemma*) echo translategemma ;;
+        *milmmt*)         echo milmmt ;;
+        *)                echo generic ;;
+    esac
+}
+
 # Every installed model directory (has a config.json), one resolved absolute path per line, in
 # stable lexical order. translategemma-* first, then any other model dir (same order as
 # resolve_model_dir), de-duplicated so a translategemma dir is not also listed by the catch-all.
@@ -107,22 +119,36 @@ list_model_dirs() {
     done
 }
 
-# A short human label naming the model, e.g. "TranslateGemma 27B (4-bit)". Falls back to the
-# bare directory name for anything that is not a recognised translategemma quant.
+# A short human label naming the model, e.g. "TranslateGemma 27B (4-bit)" or
+# "MiLMMT-46 12B (4-bit)". Falls back to the bare directory name for anything that is not a
+# recognised quant of a known family. Name parsing is case-insensitive (TranslateGemma repos
+# use -12b-, MiLMMT repos -12B-).
 model_display_label() {   # $1 = model dir path
-    local _b="$(/usr/bin/basename "$1")" _p="" _q=""
-    case "$_b" in *-27b-*) _p="27B" ;; *-12b-*) _p="12B" ;; *-4b-*) _p="4B" ;; esac
-    case "$_b" in *8bit) _q="8-bit" ;; *4bit) _q="4-bit" ;; esac
-    if [ -n "$_p" ] && [ -n "$_q" ]; then /usr/bin/printf 'TranslateGemma %s (%s)' "$_p" "$_q"; else /usr/bin/printf '%s' "$_b"; fi
+    local _b="$(/usr/bin/basename "$1")" _p="" _q="" _f=""
+    local _l=$(/usr/bin/printf '%s' "$_b" | /usr/bin/tr '[:upper:]' '[:lower:]')
+    case "$_l" in *-27b-*) _p="27B" ;; *-12b-*) _p="12B" ;; *-4b-*) _p="4B" ;; esac
+    case "$_l" in *8bit) _q="8-bit" ;; *6bit) _q="6-bit" ;; *5bit) _q="5-bit" ;; *4bit) _q="4-bit" ;; esac
+    case "$(model_family_of "$_b")" in
+        translategemma) _f="TranslateGemma" ;;
+        milmmt)         _f="MiLMMT-46" ;;
+    esac
+    if [ -n "$_f" ] && [ -n "$_p" ] && [ -n "$_q" ]; then /usr/bin/printf '%s %s (%s)' "$_f" "$_p" "$_q"; else /usr/bin/printf '%s' "$_b"; fi
 }
 
 # Spawn the long-lived map broker for a model into a spool, backgrounded with /dev/null stdin
 # (it does NOT treat that as parent-death; it exits when the spool dir disappears or is reaped).
-# Prints the broker's pid.
+# Prints the broker's pid. TranslateGemma conversions need "<end_of_turn>" unioned into the
+# stop set (their generation_config omits it); MiLMMT declares its stop tokens itself.
 spawn_broker() {   # $1 = spool dir, $2 = model dir
-    "$AGENT_BIN" map --model "$2" --spool "$1" \
-        --extra-eos-token "$EXTRA_EOS" --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
-        < /dev/null >> "$1/agent.log" 2>&1 &
+    if [ "$(model_family_of "$2")" = translategemma ]; then
+        "$AGENT_BIN" map --model "$2" --spool "$1" \
+            --extra-eos-token "$EXTRA_EOS" --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
+            < /dev/null >> "$1/agent.log" 2>&1 &
+    else
+        "$AGENT_BIN" map --model "$2" --spool "$1" \
+            --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
+            < /dev/null >> "$1/agent.log" 2>&1 &
+    fi
     echo $!
 }
 
@@ -152,6 +178,19 @@ lang_code_index() {   # $1 = spool, $2 = code
     /usr/bin/grep -n "^${2}\$" "$1/langcodes" 2>/dev/null | /usr/bin/head -1 | /usr/bin/cut -d: -f1
 }
 
+# Prompt name of a language code for a model FAMILY, from the family's language file
+# (Resources/languages.<family>.tsv: code <TAB> prompt name; # comments allowed). That file is
+# also the authority on which languages the family supports: no row (or no file) = no name.
+# The prompt name can differ from the display name - e.g. MiLMMT-46 was trained on plain
+# "Portuguese" and "Norwegian", not "Portuguese (Brazil)" or "Norwegian Bokmal". Quotes and
+# backslashes are stripped so the name can be embedded in a JSON string (the shipped names
+# contain neither; this is a guard, not a feature).
+family_prompt_lang_name() {   # $1 = family, $2 = code
+    [ -n "$1" ] && [ -n "$2" ] || return 0
+    /usr/bin/awk -F'\t' -v c="$2" '/^[[:space:]]*#/ { next } $1==c { print $2; exit }' \
+        "$RESOURCES_DIR/languages.$1.tsv" 2>/dev/null | /usr/bin/tr -d '"\\'
+}
+
 # Resolve a picker's 1-based index to a language code via the spool's langcodes file. Prints the
 # code (empty for a missing/non-numeric index or an out-of-range row).
 resolve_lang_code() {   # $1 = spool, $2 = 1-based index
@@ -159,45 +198,79 @@ resolve_lang_code() {   # $1 = spool, $2 = 1-based index
     /usr/bin/sed -n "${2}p" "$1/langcodes"
 }
 
-# Populate the From/To language pickers from languages.tsv and restore the saved selection.
-# The list is sorted alphabetically by display name (the shipped TSV stays the source of truth):
-# we sort a copy into a temp file first (not a "sort | while" pipe) so the loop runs in this shell
-# and $_opts survives it; sorting by the leading name field is safe because names contain no tabs.
-# A parallel ordered langcodes file lets handlers map a picker index -> language code. Default
-# From/To are looked up by code (en/es) rather than assumed positions, since the list is sorted.
+# Populate the From/To language pickers for the CURRENT model family and restore the saved
+# selection. The list is sorted alphabetically by display name (the shipped TSV stays the source
+# of truth): we sort a copy into a temp file first (not a "sort | while" pipe) so the loop runs in
+# this shell and $_opts survives it; sorting by the leading name field is safe because names
+# contain no tabs. When the selected model's family ships a language file
+# (languages.<family>.tsv), the options are FILTERED to the codes it lists, so the pickers only
+# ever offer what the model supports; a family without one (TranslateGemma, generic) gets the
+# full list. The family populated for is recorded in the spool (langfamily) so the poller can
+# re-populate when a model switch changes it.
+#
+# A parallel ordered langcodes file lets handlers map a picker index -> language code. Selections
+# persist as language CODES (FromLang/ToLang defaults keys) - an index would silently point at a
+# different language whenever the family list changes. Legacy FromIndex/ToIndex values (1-based
+# rows of the full sorted list, reproduced in langcodes.all) are migrated here, one-shot, by
+# writing the resolved code. A saved code absent from the current family's list falls back to
+# en/es by code (then row 1) WITHOUT persisting the fallback: the programmatic picker sets below
+# are wrapped in a lang_quiet window that the change handlers honor, so switching to a family
+# that lacks the saved language masks the preference for the session instead of erasing it -
+# switching back restores it.
 populate_language_pickers() {   # $1 = spool
     local _spool="$1"
     local _tab=$(/usr/bin/printf '\t')
     local _sorted="$_spool/languages.sorted.tsv"
+    local _family=$(model_family_of "$(/bin/cat "$_spool/model.dir" 2>/dev/null)")
+    local _famfile="$RESOURCES_DIR/languages.$_family.tsv"
     local _opts="["
     local _first=1
-    local _name _code
+    local _name _code _legacy
     LC_ALL=C /usr/bin/sort -f "$RESOURCES_DIR/languages.tsv" > "$_sorted"
-    /bin/rm -f "$_spool/langcodes"
+    /bin/rm -f "$_spool/langcodes" "$_spool/langcodes.all"
     while IFS="$_tab" read -r _name _code; do
         [ -n "$_name" ] || continue
         [ -n "$_code" ] || continue
+        /usr/bin/printf '%s\n' "$_code" >> "$_spool/langcodes.all"
+        if [ -f "$_famfile" ]; then
+            [ -n "$(family_prompt_lang_name "$_family" "$_code")" ] || continue
+        fi
         if [ "$_first" = 1 ]; then _first=0; else _opts="$_opts,"; fi
         _opts="$_opts\"$_name\""
         /usr/bin/printf '%s\n' "$_code" >> "$_spool/langcodes"
     done < "$_sorted"
     _opts="$_opts]"
+    /usr/bin/printf '%s' "$_family" > "$_spool/langfamily"
 
     "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_opts"
     "$dialog" "$window_uuid" "$TO_PICKER" omc_set_property "options" "$_opts"
 
-    local _nlangs=$(/usr/bin/wc -l < "$_spool/langcodes" | /usr/bin/tr -d ' ')
-    [ -n "$_nlangs" ] && [ "$_nlangs" -ge 1 ] 2>/dev/null || _nlangs=1
-    local _default_from=$(lang_code_index "$_spool" en); case "$_default_from" in ''|*[!0-9]*) _default_from=1 ;; esac
-    local _default_to=$(lang_code_index "$_spool" es);   case "$_default_to"   in ''|*[!0-9]*) _default_to=$_default_from ;; esac
-    local _saved_from=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
-    local _saved_to=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
-    case "$_saved_from" in ''|*[!0-9]*) _saved_from=$_default_from ;; esac
-    case "$_saved_to" in ''|*[!0-9]*) _saved_to=$_default_to ;; esac
-    [ "$_saved_from" -ge 1 ] && [ "$_saved_from" -le "$_nlangs" ] 2>/dev/null || _saved_from=$_default_from
-    [ "$_saved_to" -ge 1 ] && [ "$_saved_to" -le "$_nlangs" ] 2>/dev/null || _saved_to=$_default_to
-    "$dialog" "$window_uuid" "$FROM_PICKER" "$_saved_from"
-    "$dialog" "$window_uuid" "$TO_PICKER" "$_saved_to"
+    local _from_code=$(/usr/bin/defaults read "$BUNDLE_ID" FromLang 2>/dev/null)
+    local _to_code=$(/usr/bin/defaults read "$BUNDLE_ID" ToLang 2>/dev/null)
+    if [ -z "$_from_code" ]; then
+        _legacy=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
+        case "$_legacy" in ''|*[!0-9]*) ;; *) _from_code=$(/usr/bin/sed -n "${_legacy}p" "$_spool/langcodes.all") ;; esac
+        [ -n "$_from_code" ] && /usr/bin/defaults write "$BUNDLE_ID" FromLang "$_from_code"
+    fi
+    if [ -z "$_to_code" ]; then
+        _legacy=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
+        case "$_legacy" in ''|*[!0-9]*) ;; *) _to_code=$(/usr/bin/sed -n "${_legacy}p" "$_spool/langcodes.all") ;; esac
+        [ -n "$_to_code" ] && /usr/bin/defaults write "$BUNDLE_ID" ToLang "$_to_code"
+    fi
+
+    local _from=$(lang_code_index "$_spool" "$_from_code")
+    [ -n "$_from" ] || _from=$(lang_code_index "$_spool" en)
+    case "$_from" in ''|*[!0-9]*) _from=1 ;; esac
+    local _to=$(lang_code_index "$_spool" "$_to_code")
+    [ -n "$_to" ] || _to=$(lang_code_index "$_spool" es)
+    case "$_to" in ''|*[!0-9]*) _to=$_from ;; esac
+
+    # Quiet window for the programmatic sets below: the change handlers skip persisting inside
+    # it, so a family-filter fallback (saved language not in this list) cannot overwrite the
+    # saved preference. Mirrors the model picker's picker_quiet.
+    /usr/bin/printf '%s' "$(( $(/bin/date +%s) + 2 ))" > "$_spool/lang_quiet"
+    "$dialog" "$window_uuid" "$FROM_PICKER" "$_from"
+    "$dialog" "$window_uuid" "$TO_PICKER" "$_to"
 }
 
 # Compose a translation job from source text (read on STDIN) and drop it into the spool for the
@@ -205,8 +278,38 @@ populate_language_pickers() {   # $1 = spool
 # both windows. The source text goes to a per-epoch file (printf %s never interprets content) so
 # a rapid re-dispatch can never pair one job's text with another job's language metadata; job.json
 # then carries only fixed, safe values. Callers hold the dispatch lock and own the UI transitions.
+#
+# The job's template is FAMILY-SPECIFIC (family of the spool's selected model.dir, written by
+# the poller that owns the broker):
+#   - translategemma (and generic): TranslateGemma's structured chat messages, rendered against
+#     the model's own chat template ({type, source_lang_code, target_lang_code, text}). The
+#     generic fallback also covers a missing model.dir (empty basename) - safe because Translate
+#     is only reachable once the poller has a ready broker, which requires model.dir to exist;
+#     a NEW raw-prompt family must be added to model_family_of and branched here explicitly, or
+#     it would silently get this chat-messages job.
+#   - milmmt: MiLMMT-46 ships NO chat template and is prompted as a raw completion per its model
+#     card - "Translate this from <From> to <To>:\n<From>: ...\n<To>:" with add_special_tokens
+#     false and ENGLISH LANGUAGE NAMES, not codes. The \n in the heredoc below are literal
+#     two-character sequences, which is exactly what the JSON string needs.
+# Returns non-zero (publishing nothing) only when the milmmt path cannot resolve both language
+# names - the caller surfaces that as a UI error.
 publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; source text on STDIN
     local _spool="$1" _from="$2" _to="$3"
+    local _family=$(model_family_of "$(/bin/cat "$_spool/model.dir" 2>/dev/null)")
+    local _from_name="" _to_name=""
+    if [ "$_family" = milmmt ]; then
+        # Names come from the family's language file (its prompt names differ from the display
+        # names for Portuguese/Norwegian), which doubles as the support check: an unsupported
+        # code resolves to nothing and the job is refused rather than mistranslated.
+        _from_name=$(family_prompt_lang_name "$_family" "$_from")
+        _to_name=$(family_prompt_lang_name "$_family" "$_to")
+        if [ -z "$_from_name" ] || [ -z "$_to_name" ]; then
+            # Swallow stdin so the caller's pipe never blocks or SIGPIPEs, then report failure.
+            /bin/cat > /dev/null
+            return 1
+        fi
+    fi
+
     local _epoch=$(pb_get "interp_epoch_${window_uuid}")
     case "$_epoch" in ''|*[!0-9]*) _epoch=0 ;; esac
     _epoch=$((_epoch + 1))
@@ -215,9 +318,15 @@ publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; sourc
     local _srcfile="source.${_epoch}.txt"
     /bin/cat > "$_spool/$_srcfile"
 
-    /bin/cat > "$_spool/job.json.tmp" <<EOF
+    if [ "$_family" = milmmt ]; then
+        /bin/cat > "$_spool/job.json.tmp" <<EOF
+{"epoch":$_epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$_srcfile","add_special_tokens":false,"prompt":"Translate this from $_from_name to $_to_name:\n$_from_name: {{chunk}}\n$_to_name:"}
+EOF
+    else
+        /bin/cat > "$_spool/job.json.tmp" <<EOF
 {"epoch":$_epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$_srcfile","messages":[{"role":"user","content":[{"type":"text","source_lang_code":"$_from","target_lang_code":"$_to","text":"{{chunk}}"}]}]}
 EOF
+    fi
     # Drop the previous job's output so the poller re-pushes only once the broker writes fresh
     # output; stamp the dispatch moment (high-resolution) and clear any prior elapsed so the poller
     # can report how long this translation took when it observes "done".

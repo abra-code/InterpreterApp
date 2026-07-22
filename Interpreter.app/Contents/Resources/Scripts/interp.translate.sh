@@ -49,7 +49,15 @@ nchars=$(/usr/bin/printf '%s' "$src" | LC_ALL=en_US.UTF-8 /usr/bin/wc -m | /usr/
 
 # Publish the job from the editor's text (shared with the document window): bumps the epoch, writes
 # the per-epoch source file, builds+publishes job.json, and stamps the dispatch time for timing.
+# Publishing can refuse (a raw-prompt family whose language names cannot be resolved) - restore
+# the UI and say so instead of leaving a silent dead Translate.
 /usr/bin/printf '%s' "$src" | publish_translation_job "$spool" "$src_code" "$tgt_code"
+if [ $? -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
+    disable_ctrl "$STOP_BTN"
+    set_status "Could not prepare the translation for this model and language pair."
+    exit 0
+fi
 
 set_status "Translating…"
 

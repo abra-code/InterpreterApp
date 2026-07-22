@@ -21,8 +21,11 @@ if [ -n "$tgt" ]; then
     /usr/bin/printf '%s' "$src" | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
 fi
 
-# Persist the swapped language preferences.
-[ -n "$to_idx" ] && /usr/bin/defaults write "$BUNDLE_ID" FromIndex "$to_idx"
-[ -n "$from_idx" ] && /usr/bin/defaults write "$BUNDLE_ID" ToIndex "$from_idx"
+# Persist the swapped language preferences (as codes; indices shift between family lists).
+spool=$(spool_dir_for "$window_uuid")
+from_code=$(resolve_lang_code "$spool" "$to_idx")
+to_code=$(resolve_lang_code "$spool" "$from_idx")
+[ -n "$from_code" ] && /usr/bin/defaults write "$BUNDLE_ID" FromLang "$from_code"
+[ -n "$to_code" ] && /usr/bin/defaults write "$BUNDLE_ID" ToLang "$to_code"
 
 exit 0

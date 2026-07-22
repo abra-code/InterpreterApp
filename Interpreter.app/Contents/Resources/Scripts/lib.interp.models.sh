@@ -2,65 +2,126 @@
 # Sourced by the chooser/download handlers. POSIX /bin/sh (bash 3.2). No Python: HF JSON is
 # parsed with `plutil -p` + awk.
 #
-# The curation turns the machine's RAM and the live per-model download sizes into a small
-# outcome-framed set (Best quality / Balanced-recommended / Faster) rather than exposing
-# params/bit-width. Guiding rule: for a fixed memory budget, MORE PARAMETERS at 4-bit beats
-# FEWER at 8-bit, so the recommended pick is the largest-params 4-bit model that fits with
-# comfortable headroom; 8-bit is offered as the top "best quality" option only when it fits.
+# The candidate set is data-driven: models.catalog.tsv lists every offered variant across all
+# model FAMILIES (TranslateGemma, MiLMMT-46, ...), ranked best -> smallest within each family.
+# The curation turns the machine's RAM and the live per-variant download sizes into grouped,
+# outcome-framed SECTIONS - Best Quality / Recommended / Faster - with up to one card per
+# family in each section, rather than exposing params/bit-width. Guiding rules: for a fixed
+# memory budget, MORE PARAMETERS at 4-bit beats FEWER at 8-bit, so a family's recommended
+# pick is its largest-params 4-bit model that fits with comfortable headroom. But quant bits
+# are never themselves the speed lever - a Faster pick earns its speed from fewer params, so
+# within the smallest params class the HIGHEST quant that still fits comfortably wins (a 4B
+# 8-bit translates visibly better than a 4B 4-bit at nearly the same speed).
 
 [ -n "${__INTERP_MODELS_LIB:-}" ] && return 0
 __INTERP_MODELS_LIB=1
 
-HF_AUTHOR="mlx-community"
-# Canonical candidates, ranked best -> smallest by (params, then bits). Oddball repos
-# (mxfp4, bf16, immersive-translate) are intentionally excluded from the curated set.
-INTERP_CANDIDATES="translategemma-27b-it-8bit translategemma-27b-it-4bit translategemma-12b-it-8bit translategemma-12b-it-4bit translategemma-4b-it-8bit translategemma-4b-it-4bit"
+INTERP_CATALOG_TSV="$OMC_APP_BUNDLE_PATH/Contents/Resources/models.catalog.tsv"
 
 machine_ram_bytes() { /usr/sbin/sysctl -n hw.memsize 2>/dev/null; }
 
-model_params_of() { case "$1" in *-27b-*) echo 27B;; *-12b-*) echo 12B;; *-4b-*) echo 4B;; *) echo "?";; esac; }
-model_bits_of()   { case "$1" in *-8bit) echo 8;; *-4bit) echo 4;; *) echo "?";; esac; }
-model_short_label() { echo "$(model_params_of "$1") ($(model_bits_of "$1")-bit)"; }
 bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf "%.1f GB", b/1000000000 }'; }
+
+# Human name of a model family (catalog `family` column value -> display string).
+family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; *) echo "$1";; esac; }
 
 # Total download size (bytes) of a repo's main revision. Each file object in the tree API
 # reports a top-level "size" (the real size, for both LFS weights and small files) AND, for
 # LFS files, a duplicate nested lfs."size" - so we count only the FIRST "size" per file object
 # (reset at each array-element header `N => {`) to avoid double-counting the weights. Prints 0
 # on failure / nonexistent repo.
+#
+# A nonexistent repo is the NORMAL case for planned-but-unpublished catalog entries, so it must
+# fail FAST: --retry-all-errors would burn 3 retries x 2 s on every 404, several times per load.
+# One un-retried probe classifies the repo first; only a live repo (200) proceeds to the retried
+# fetch, whose --retry-all-errors still covers the transient 401/429s the HF CDN throws.
 hf_repo_size_bytes() {   # $1 = author/name
-    /usr/bin/curl -fsSL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
-        "https://huggingface.co/api/models/$1/tree/main?recursive=true" 2>/dev/null \
-        | /usr/bin/plutil -p - 2>/dev/null \
+    local _url="https://huggingface.co/api/models/$1/tree/main?recursive=true"
+    local _body _code
+    # mktemp, not a $$-suffixed name: interp_fetch_catalog runs these probes in parallel
+    # subshells, which all share the parent's $$ and would clobber one body file.
+    _body=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/interp.tree.XXXXXX") || { echo 0; return 0; }
+    # Timeouts are deliberately tight (8 s connect / 20 s total, one short retry round): the
+    # chooser blocks its card list on the slowest probe, so on a bad network fast-missing beats
+    # slow-complete - a missed row just omits a card until Refresh.
+    _code=$(/usr/bin/curl -sSL -o "$_body" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
+        "$_url" 2>/dev/null)
+    case "$_code" in
+        200) ;;   # got the tree in one shot - parse it below
+        404|403)
+            # Repo absent (or gated): a definitive no.
+            /bin/rm -f "$_body"; echo 0; return 0 ;;
+        *)
+            # Transient (429/5xx/network, code 000): retry properly.
+            /usr/bin/curl -fsSL -o "$_body" --connect-timeout 8 --max-time 30 \
+                --retry 2 --retry-delay 1 --retry-all-errors "$_url" 2>/dev/null \
+                || { /bin/rm -f "$_body"; echo 0; return 0; } ;;
+    esac
+    /usr/bin/plutil -p "$_body" 2>/dev/null \
         | /usr/bin/awk '
             /^[[:space:]]*[0-9]+ => \{/ { counted=0 }
             /"size" =>/ { if (!counted) { n=$3; gsub(/[^0-9]/,"",n); tot+=n; counted=1 } }
             END { print tot+0 }'
+    /bin/rm -f "$_body"
 }
 
-# Fetch each candidate's size into a cache file "name<TAB>size_bytes" (existing repos only).
+# Fetch each catalog variant's size into a cache file (existing repos only):
+#   family <TAB> author <TAB> repo <TAB> params <TAB> bits <TAB> size_bytes
+# A repo the API does not know (a planned-but-unpublished conversion) is skipped silently.
+# Succeeds (0) if at least one variant exists.
+#
+# The per-repo probes run in PARALLEL subshells (each writing its own .part file, reassembled
+# in catalog order afterwards): sequentially, the chooser's blank time was the SUM of the
+# probes - ~1.5 s when the network is good, but a single flaky probe (timeout/retry, up to
+# ~30 s) stalled everything behind it. In parallel the wall time is one probe, worst case one
+# slow one. Each subshell does one small curl + awk; with a catalog of ~10 rows the process
+# burst is trivial.
 interp_fetch_catalog() {   # $1 = output cache file
-    local _out="$1" _name _sz
+    local _out="$1" _tab=$(/usr/bin/printf '\t')
+    local _fam _auth _name _par _bits _i=0 _n
+    /bin/rm -f "$_out" "$_out".*.part 2>/dev/null
     : > "$_out"
-    for _name in $INTERP_CANDIDATES; do
-        _sz=$(hf_repo_size_bytes "$HF_AUTHOR/$_name")
-        [ -n "$_sz" ] && [ "$_sz" -gt 0 ] 2>/dev/null || continue
-        /usr/bin/printf '%s\t%s\n' "$_name" "$_sz" >> "$_out"
+    while IFS="$_tab" read -r _fam _auth _name _par _bits; do
+        case "$_fam" in ''|'#'*) continue ;; esac
+        [ -n "$_auth" ] && [ -n "$_name" ] || continue
+        _i=$((_i + 1))
+        (
+            _sz=$(hf_repo_size_bytes "$_auth/$_name")
+            [ -n "$_sz" ] && [ "$_sz" -gt 0 ] 2>/dev/null || exit 0
+            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$_fam" "$_auth" "$_name" "$_par" "$_bits" "$_sz" > "$_out.$_i.part"
+        ) &
+    done < "$INTERP_CATALOG_TSV"
+    wait
+    _n=$_i
+    _i=0
+    while [ "$_i" -lt "$_n" ]; do
+        _i=$((_i + 1))
+        [ -f "$_out.$_i.part" ] || continue
+        /bin/cat "$_out.$_i.part" >> "$_out"
+        /bin/rm -f "$_out.$_i.part"
     done
     [ -s "$_out" ]
 }
 
-# Curate the cached catalog for this machine's RAM. Emits, tab-separated, one row per tier:
-#   tier <TAB> repo <TAB> label <TAB> size_bytes <TAB> recommended(1/0) <TAB> heavy(1/0) <TAB> description
-# tier in {best,balanced,faster}. Only OFFERABLE models are curated (fewer than three yields
-# fewer rows). `repo` is the bare name (no author).
+# Curate the cached catalog for this machine's RAM. Emits, tab-separated, one row per CARD:
+#   section <TAB> family <TAB> author <TAB> repo <TAB> label <TAB> size_bytes <TAB> heavy(1/0) <TAB> description
+# section in {best,recommended,faster}, rows grouped by section in that order; within a
+# section, catalog family order. Each family contributes at most one card per section, and a
+# variant appears in exactly one section. Fewer offerable variants yield fewer rows; a family
+# with nothing offerable contributes none.
 #
 # Memory model (all vs hw.memsize R): estimated peak = weights*1.15 + 1.5 GB (short-context
 # KV/activations + runtime). OFFER if peak <= 92% R (it will load - below mlx-agent's 0.90
 # weights gate - and leave the OS room). HEAVY (a caveat, still offered) if peak > 70% R.
-# COMFORTABLE (eligible to be the recommended pick) if peak <= 55% R.
+# COMFORTABLE (eligible to be a recommended pick) if peak <= 55% R. Per family (variants in
+# catalog order = best first): recommended = first comfortable 4-bit, else the second
+# offerable (or the only one); best = the first offerable when it is not the recommended
+# pick; faster = within the smallest-params offerable class, the first (= highest-quant)
+# comfortable variant, else that class's smallest - when not already used.
 interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
-    local _cache="$1" _tier _idx _rec _heavy _repo _size _desc
+    local _cache="$1" _tab=$(/usr/bin/printf '\t')
+    local _sec _idx _heavy _fam _auth _repo _par _bits _size _desc _famdisp
     [ -s "$_cache" ] || return 1
     local _ram=$(machine_ram_bytes); [ "$_ram" -gt 0 ] 2>/dev/null || return 1
 
@@ -71,38 +132,81 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
 
     /usr/bin/awk -F'\t' -v ram="$_ram" '
         function peak(sz) { return sz*1.15 + 1500000000 }
-        { name[NR]=$1; size[NR]=$2; N=NR }
+        { fam[NR]=$1; auth[NR]=$2; name[NR]=$3; par[NR]=$4; bits[NR]=$5; size[NR]=$6; N=NR
+          if (!($1 in famseen)) { famseen[$1]=1; forder[++nfam]=$1 } }
         END {
-            offer_ceil = ram*0.92; comfy_ceil = ram*0.55; heavy_floor = ram*0.70; nf=0
-            for (i=1;i<=N;i++) if (peak(size[i]) <= offer_ceil) { nf++; fit[nf]=i }
-            if (nf==0) exit 1
-            best=fit[1]; faster=fit[nf]; bal=0
-            # recommended = highest-quality 4-bit that fits comfortably (never a heavy model).
-            for (k=1;k<=nf;k++) { i=fit[k]; if (name[i] ~ /4bit/ && peak(size[i]) <= comfy_ceil) { bal=i; break } }
-            if (bal==0) bal = (nf>=2 ? fit[2] : fit[1])
-            heavy_of[best] = (peak(size[best]) > heavy_floor) ? 1 : 0
-            heavy_of[bal]  = (peak(size[bal])  > heavy_floor) ? 1 : 0
-            heavy_of[faster] = (peak(size[faster]) > heavy_floor) ? 1 : 0
-            if (best!=bal)   { print "best\t" best "\t0\t" heavy_of[best]; seen[best]=1 }
-            print "balanced\t" bal "\t1\t" heavy_of[bal]; seen[bal]=1
-            if (!(faster in seen) && faster!=bal && faster!=best) print "faster\t" faster "\t0\t" heavy_of[faster]
-            for (i=1;i<=N;i++) print "ROW\t" i "\t" name[i] "\t" size[i] > "/dev/stderr"
+            offer_ceil = ram*0.92; comfy_ceil = ram*0.55; heavy_floor = ram*0.70
+            nout = 0
+            for (f=1; f<=nfam; f++) {
+                fname = forder[f]
+                cnt = 0
+                for (i=1; i<=N; i++) if (fam[i]==fname && peak(size[i]) <= offer_ceil) { cnt++; fit[cnt]=i }
+                if (cnt==0) continue
+                rec = 0
+                for (k=1; k<=cnt; k++) { i=fit[k]; if (bits[i]==4 && peak(size[i]) <= comfy_ceil) { rec=i; break } }
+                if (rec==0) rec = (cnt>=2 ? fit[2] : fit[1])
+                best = (fit[1]!=rec ? fit[1] : 0)
+                # Faster gets its speed from FEWER PARAMS, not fewer bits: within the
+                # smallest-params offerable class take the first (= highest-quant, by catalog
+                # order) variant that is still comfortable, falling back to the class smallest
+                # only when nothing in it is comfortable.
+                minpar = par[fit[1]] + 0
+                for (k=2; k<=cnt; k++) if (par[fit[k]] + 0 < minpar) minpar = par[fit[k]] + 0
+                fast = 0; fclass = 0
+                for (k=1; k<=cnt; k++) { i=fit[k]; if (par[i] + 0 == minpar) { fclass=i; if (fast==0 && peak(size[i]) <= comfy_ceil) fast=i } }
+                if (fast==0) fast = fclass
+                if (fast==rec || fast==best) fast = 0
+                if (best) { nout++; osec[nout]="best"; oidx[nout]=best }
+                nout++; osec[nout]="recommended"; oidx[nout]=rec
+                if (fast) { nout++; osec[nout]="faster"; oidx[nout]=fast }
+            }
+            if (nout==0) exit 1
+            ns = split("best recommended faster", secs, " ")
+            for (s=1; s<=ns; s++)
+                for (o=1; o<=nout; o++)
+                    if (osec[o]==secs[s]) {
+                        i = oidx[o]
+                        print secs[s] "\t" i "\t" ((peak(size[i]) > heavy_floor) ? 1 : 0)
+                    }
+            for (i=1; i<=N; i++) print "ROW\t" i "\t" fam[i] "\t" auth[i] "\t" name[i] "\t" par[i] "\t" bits[i] "\t" size[i] > "/dev/stderr"
         }
-    ' "$_cache" 2>"$_rows" | while IFS='	' read -r _tier _idx _rec _heavy; do
-        _repo=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $3; exit}' "$_rows")
-        _size=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $4; exit}' "$_rows")
-        case "$_tier" in
+    ' "$_cache" 2>"$_rows" | while IFS="$_tab" read -r _sec _idx _heavy; do
+        _fam=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $3; exit}' "$_rows")
+        _auth=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $4; exit}' "$_rows")
+        _repo=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $5; exit}' "$_rows")
+        _par=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $6; exit}' "$_rows")
+        _bits=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $7; exit}' "$_rows")
+        _size=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $8; exit}' "$_rows")
+        _famdisp=$(family_display_name "$_fam")
+        case "$_sec" in
             best)
                 if [ "$_heavy" = 1 ]; then
                     _desc="Highest quality, but heavy and much slower - uses most of your memory, so other apps may slow down."
                 else
                     _desc="Highest quality, but much slower and more memory-demanding than the recommended model."
                 fi ;;
-            balanced) _desc="Recommended. Near-top quality and much faster than the largest model - best choice for accuracy and speed." ;;
-            faster)   _desc="Fastest and smallest, but noticeably weaker - it can mistranslate nuanced text." ;;
+            recommended) _desc="Near-top quality and much faster than the largest model - best choice for accuracy and speed." ;;
+            faster)      _desc="Fastest - fewest parameters, so it runs quickest. Handles everyday text well, but can miss nuance the larger models catch." ;;
         esac
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$_tier" "$_repo" "$(model_short_label "$_repo")" "$_size" "$_rec" "$_heavy" "$_desc"
+        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$_sec" "$_fam" "$_auth" "$_repo" "$_famdisp ${_par}B (${_bits}-bit)" "$_size" "$_heavy" "$_desc"
     done
     /bin/rm -f "$_rows"
 }
+
+# Look up one curated card row by its 1-based row number. Prints the row (8 tab-separated
+# fields) or nothing. Card view ids encode this row number - see interp_card_base_id.
+# INVARIANT: interp_curate_models emits exactly one non-empty line per card, so the row number
+# the card builders/pollers count equals the raw line number this sed uses. Anything that adds
+# blank/comment lines to curated.tsv must also teach this lookup to skip them.
+curated_row() {   # $1 = curated tsv, $2 = 1-based row
+    case "$2" in ''|*[!0-9]*) return 0 ;; esac
+    /usr/bin/sed -n "${2}p" "$1"
+}
+
+# The chooser builds one card per curated row at runtime (omc_insert_element); all of a
+# card's view ids derive from its row number so handlers can reverse-map a trigger id:
+#   base = 2000 + row*10 ; title=base+1 badge=base+2 desc=base+3 size=base+4
+#   download-button=base+5 info-button=base+6
+interp_card_base_id() { echo $(( 2000 + $1 * 10 )); }
+interp_card_row_of_id() { echo $(( ($1 - 2000) / 10 )); }

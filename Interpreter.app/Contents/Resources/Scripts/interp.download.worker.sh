@@ -1,10 +1,10 @@
 # interp.download.worker.sh - background model downloader, one per download. UI-DECOUPLED: it
 # writes only state files under the model's work dir; a chooser-scoped poller (interp.models.poll)
 # reflects that state into whatever chooser window is open, so a download survives closing and
-# reopening the chooser. Streams every file of an mlx-community repo into a staging dir with
+# reopening the chooser. Streams every file of a Hugging Face repo into a staging dir with
 # resumable curl, then atomically moves the finished model into place (writing a Gemma NOTICE.txt
 # beside it). Interrupted downloads leave staging intact so a later click resumes. Not an OMC
-# command.  args: <repo_name>
+# command.  args: <hf_author> <repo_name>
 #
 # State files in the work dir ($DOWNLOADS_DIR/<name>):
 #   state   : preparing | downloading | installing | done | error
@@ -14,8 +14,9 @@
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.models.sh"
 
-name="$1"
-repo="$HF_AUTHOR/$name"
+author="$1"
+name="$2"
+repo="$author/$name"
 dest="$MODELS_DIR/$name"
 work="$DOWNLOADS_DIR/$name"
 staging="$work/staging"
@@ -89,17 +90,23 @@ trap - TERM INT
 [ "$rc" != 0 ] && set_err "Download interrupted. Click Download to resume."
 
 # --- install: move into place atomically, drop the Gemma NOTICE beside it ----
+# Both offered families are Gemma derivatives, so the mandatory Gemma notice applies to each;
+# only the creator credit line differs.
+case "$(model_family_of "$name")" in
+    milmmt) credit="This model (MiLMMT-46, by Xiaomi, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
+    *)      credit="This model (TranslateGemma, by Google, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
+esac
 set_state installing
 /bin/rm -rf "$dest"
 /bin/mv "$staging" "$dest"
 mv_rc=$?
 if [ "$mv_rc" -eq 0 ]; then
-    /bin/cat > "$dest/NOTICE.txt" <<'NOTICE'
+    /bin/cat > "$dest/NOTICE.txt" <<NOTICE
 Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
 
-This model (TranslateGemma, by Google, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use. Your use is also subject to the Gemma Prohibited Use Policy at ai.google.dev/gemma/prohibited_use_policy.
+$credit Your use is also subject to the Gemma Prohibited Use Policy at ai.google.dev/gemma/prohibited_use_policy.
 
-MLX build published by the Hugging Face mlx-community.
+MLX build downloaded from the Hugging Face repository $repo.
 NOTICE
     set_state done
 else

@@ -1,0 +1,45 @@
+# languages.milmmt.tsv - the subset of languages.tsv codes the MiLMMT-46 family supports,
+# with the EXACT English language name its translation prompt expects (per the model card).
+# Column 1 = code (must match languages.tsv), column 2 = prompt name. Note the prompt names
+# that differ from the display names: both Portuguese variants prompt as plain "Portuguese"
+# and Norwegian Bokmal prompts as "Norwegian". App languages MiLMMT does NOT cover (omitted
+# here): uk, sr-Latn, te, sw, af, et, lv, lt, is, ga.
+en	English
+es	Spanish
+zh-Hans	Chinese (Simplified)
+zh-Hant	Chinese (Traditional)
+fr	French
+de	German
+ja	Japanese
+ko	Korean
+it	Italian
+ru	Russian
+pt-BR	Portuguese
+pt-PT	Portuguese
+ar	Arabic
+hi	Hindi
+bn	Bengali
+nl	Dutch
+pl	Polish
+tr	Turkish
+vi	Vietnamese
+th	Thai
+id	Indonesian
+sv	Swedish
+da	Danish
+nb	Norwegian
+fi	Finnish
+cs	Czech
+el	Greek
+he	Hebrew
+hu	Hungarian
+ro	Romanian
+sk	Slovak
+bg	Bulgarian
+hr	Croatian
+ca	Catalan
+fa	Persian
+ta	Tamil
+ur	Urdu
+ms	Malay
+sl	Slovenian

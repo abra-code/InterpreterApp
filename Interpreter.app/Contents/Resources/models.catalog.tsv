@@ -1,0 +1,17 @@
+# models.catalog.tsv - the model families and variants the chooser offers, best -> smallest
+# WITHIN each family (this order is the quality ranking curation relies on). Columns:
+#   family <TAB> hf_author <TAB> repo_name <TAB> params_billions <TAB> quant_bits
+# Lines starting with # are ignored. A repo that does not exist (yet) on Hugging Face is
+# skipped silently by the catalog fetch, so planned-but-unpublished conversions can stay
+# listed here and light up the moment they are uploaded. When publishing MiLMMT conversions
+# under a different account, change the hf_author column here - nothing else references it.
+translategemma	mlx-community	translategemma-27b-it-8bit	27	8
+translategemma	mlx-community	translategemma-27b-it-6bit	27	6
+translategemma	mlx-community	translategemma-27b-it-4bit	27	4
+translategemma	mlx-community	translategemma-12b-it-8bit	12	8
+translategemma	mlx-community	translategemma-12b-it-4bit	12	4
+translategemma	mlx-community	translategemma-4b-it-8bit	4	8
+translategemma	mlx-community	translategemma-4b-it-4bit	4	4
+milmmt	mlx-community	MiLMMT-46-12B-v0.1-6bit	12	6
+milmmt	mlx-community	MiLMMT-46-12B-v0.1-4bit	12	4
+milmmt	mlx-community	MiLMMT-46-4B-v0.1-6bit	4	6
