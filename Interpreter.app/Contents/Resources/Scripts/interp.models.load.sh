@@ -47,7 +47,7 @@ render_sig() {   # $1 = curated file
     while IFS="$_tab" read -r _sec _fam _auth _repo _rest; do
         [ -n "$_repo" ] || continue
         /usr/bin/printf '%s|%s|%s\n' "$_repo" \
-            "$([ -f "$MODELS_DIR/$_repo/config.json" ] && echo 1 || echo 0)" \
+            "$(model_installed_at "$MODELS_DIR/$_repo" && echo 1 || echo 0)" \
             "$(/bin/cat "$DOWNLOADS_DIR/$_repo/state" 2>/dev/null)"
     done < "$1"
 }
@@ -89,7 +89,7 @@ insert_cards() {   # $1 = curated file
         base=$(interp_card_base_id "$row")
 
         installed=0
-        [ -f "$MODELS_DIR/$repo/config.json" ] && installed=1
+        model_installed_at "$MODELS_DIR/$repo" && installed=1
 
         badge=""
         if [ "$installed" = 1 ]; then

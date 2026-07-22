@@ -1,6 +1,14 @@
 # models.catalog.tsv - the model families and variants the chooser offers, best -> smallest
 # WITHIN each family (this order is the quality ranking curation relies on). Columns:
 #   family <TAB> hf_author <TAB> repo_name <TAB> params_billions <TAB> quant_bits
+#     [<TAB> engine <TAB> gguf_file]
+# The two optional trailing columns declare a llama.cpp-served model: engine "gguf" plus the
+# one quant file to download from the repo (a GGUF repo holds many quants; the row prices and
+# fetches ONLY that file). Omitted = engine mlx, whole-repo download. Because one GGUF repo
+# holds every quant, a gguf row's repo_name column is the UNIQUE INSTALL NAME (the Models/
+# directory the file lands in, also what the display label is parsed from), and the gguf_file
+# column carries "actual_repo/file.gguf" - the real Hugging Face repo joined to the quant file
+# (which must sit at the repo root). A gguf_file without a "/" means repo_name IS the repo.
 # Lines starting with # are ignored. A repo that does not exist (yet) on Hugging Face is
 # skipped silently by the catalog fetch, so planned-but-unpublished conversions can stay
 # listed here and light up the moment they are uploaded. When publishing MiLMMT conversions
@@ -15,3 +23,6 @@ translategemma	mlx-community	translategemma-4b-it-4bit	4	4
 milmmt	mlx-community	MiLMMT-46-12B-v0.1-6bit	12	6
 milmmt	mlx-community	MiLMMT-46-12B-v0.1-4bit	12	4
 milmmt	mlx-community	MiLMMT-46-4B-v0.1-6bit	4	6
+hymt	tencent	Hy-MT2-7B-8bit	7	8	gguf	Hy-MT2-7B-GGUF/HY-MT2-7B-Q8_0.gguf
+hymt	tencent	Hy-MT2-7B-4bit	7	4	gguf	Hy-MT2-7B-GGUF/Hy-MT2-7B-Q4_K_M.gguf
+hymt	tencent	Hy-MT2-1.8B-8bit	1.8	8	gguf	Hy-MT2-1.8B-GGUF/Hy-MT2-1.8B-Q8_0.gguf

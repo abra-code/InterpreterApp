@@ -23,28 +23,43 @@ machine_ram_bytes() { /usr/sbin/sysctl -n hw.memsize 2>/dev/null; }
 bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf "%.1f GB", b/1000000000 }'; }
 
 # Human name of a model family (catalog `family` column value -> display string).
-family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; *) echo "$1";; esac; }
+family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; hymt) echo "Hy-MT2";; *) echo "$1";; esac; }
 
-# Total download size (bytes) of a repo's main revision. Each file object in the tree API
-# reports a top-level "size" (the real size, for both LFS weights and small files) AND, for
-# LFS files, a duplicate nested lfs."size" - so we count only the FIRST "size" per file object
-# (reset at each array-element header `N => {`) to avoid double-counting the weights. Prints 0
-# on failure / nonexistent repo.
+# One-sentence model-specific guidance for a family, shown on every curated card (prepended to
+# the section rationale) and in the info sheet, so a user can pick BETWEEN families, not just
+# between sizes. Grounded in the 34-translation batteries (see Private/models-matrix.md): keep
+# these claims in sync with what testing actually showed. Card fields must stay free of double
+# quotes and backslashes (they are interpolated into JSON - see insert_cards).
+family_blurb() {   # $1 = family
+    case "$1" in
+        translategemma) echo "Google's all-round translator: every app language, strongest European coverage." ;;
+        milmmt)         echo "Xiaomi's translator: matches TranslateGemma on European languages, but fewer languages (no Ukrainian)." ;;
+        hymt)           echo "Tencent's translator: the top pick for Chinese and Japanese; for European languages prefer the other families." ;;
+        *)              echo "" ;;
+    esac
+}
+
+# Download size (bytes) of a repo's main revision: the whole repo, or - when $2 names a file -
+# just that one file (a GGUF catalog row downloads a single quant file, not the repo). Each
+# file object in the tree API reports a top-level "size" (the real size, for both LFS weights
+# and small files) AND, for LFS files, a duplicate nested lfs."size" - so we count only the
+# FIRST "size" per file object (reset at each array-element header `N => {`) to avoid
+# double-counting the weights. Prints 0 on failure / nonexistent repo / file not in the tree.
 #
 # A nonexistent repo is the NORMAL case for planned-but-unpublished catalog entries, so it must
 # fail FAST: --retry-all-errors would burn 3 retries x 2 s on every 404, several times per load.
 # One un-retried probe classifies the repo first; only a live repo (200) proceeds to the retried
 # fetch, whose --retry-all-errors still covers the transient 401/429s the HF CDN throws.
-hf_repo_size_bytes() {   # $1 = author/name
+hf_repo_size_bytes() {   # $1 = author/name, $2 = optional single file path within the repo
     local _url="https://huggingface.co/api/models/$1/tree/main?recursive=true"
-    local _body _code
+
     # mktemp, not a $$-suffixed name: interp_fetch_catalog runs these probes in parallel
     # subshells, which all share the parent's $$ and would clobber one body file.
-    _body=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/interp.tree.XXXXXX") || { echo 0; return 0; }
+    local _body=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/interp.tree.XXXXXX") || { echo 0; return 0; }
     # Timeouts are deliberately tight (8 s connect / 20 s total, one short retry round): the
     # chooser blocks its card list on the slowest probe, so on a bad network fast-missing beats
     # slow-complete - a missed row just omits a card until Refresh.
-    _code=$(/usr/bin/curl -sSL -o "$_body" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
+    local _code=$(/usr/bin/curl -sSL -o "$_body" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
         "$_url" 2>/dev/null)
     case "$_code" in
         200) ;;   # got the tree in one shot - parse it below
@@ -57,11 +72,20 @@ hf_repo_size_bytes() {   # $1 = author/name
                 --retry 2 --retry-delay 1 --retry-all-errors "$_url" 2>/dev/null \
                 || { /bin/rm -f "$_body"; echo 0; return 0; } ;;
     esac
+    # Per-object accumulate-then-flush (same pattern as the download worker's enumeration):
+    # plutil prints keys ALPHABETICALLY, so an LFS object's nested lfs."size" precedes its
+    # "path" - a match-as-you-stream filter would miss every LFS file. Collect each object's
+    # first "size" and its "path", and only decide at the object boundary.
+    # Only "file" objects count (a directory whose path matched $2 would otherwise satisfy the
+    # single-file filter) - same type gate as the download worker's enumeration.
     /usr/bin/plutil -p "$_body" 2>/dev/null \
-        | /usr/bin/awk '
-            /^[[:space:]]*[0-9]+ => \{/ { counted=0 }
-            /"size" =>/ { if (!counted) { n=$3; gsub(/[^0-9]/,"",n); tot+=n; counted=1 } }
-            END { print tot+0 }'
+        | /usr/bin/awk -v want="${2:-}" '
+            function flush() { if (started && t == "file" && (want == "" || p == want)) tot += sz }
+            /^[[:space:]]*[0-9]+ => \{/ { flush(); started=1; sz=0; counted=0; p=""; t="" }
+            /"path" =>/ { v=$0; sub(/.*"path" => "/,"",v); sub(/".*/,"",v); p=v }
+            /"type" =>/ { v=$0; sub(/.*"type" => "/,"",v); sub(/".*/,"",v); t=v }
+            /"size" =>/ { if (!counted) { n=$3; gsub(/[^0-9]/,"",n); sz=n; counted=1 } }
+            END { flush(); print tot+0 }'
     /bin/rm -f "$_body"
 }
 
@@ -78,15 +102,29 @@ hf_repo_size_bytes() {   # $1 = author/name
 # burst is trivial.
 interp_fetch_catalog() {   # $1 = output cache file
     local _out="$1" _tab=$(/usr/bin/printf '\t')
-    local _fam _auth _name _par _bits _i=0 _n
+    local _fam _auth _name _par _bits _eng _gf _i=0 _n
     /bin/rm -f "$_out" "$_out".*.part 2>/dev/null
     : > "$_out"
-    while IFS="$_tab" read -r _fam _auth _name _par _bits; do
+    # Columns 6/7 (engine, gguf_file) are optional - a 5-column mlx row reads them as empty. A
+    # gguf row prices ONLY its named quant file (that is all the worker downloads); the cache
+    # keeps the original 6-column shape because nothing downstream needs the engine - installs
+    # are engine-detected by shape, and the worker re-reads the catalog for the file name.
+    while IFS="$_tab" read -r _fam _auth _name _par _bits _eng _gf; do
         case "$_fam" in ''|'#'*) continue ;; esac
         [ -n "$_auth" ] && [ -n "$_name" ] || continue
+        [ "$_eng" = gguf ] || _gf=""
         _i=$((_i + 1))
         (
-            _sz=$(hf_repo_size_bytes "$_auth/$_name")
+            # A gguf_file of the form "repo/file.gguf" prices that file in THAT repo (col 3 is
+            # then just the install name); without a "/" the row's own name column is the repo.
+            # A malformed "Repo/" (empty file component) yields NO card - pricing the whole repo
+            # would show a plausible size for a row whose download must then fail.
+            _repo="$_auth/$_name"
+            case "$_gf" in
+                */*) _repo="$_auth/${_gf%%/*}"; _gf="${_gf#*/}"
+                     [ -n "$_gf" ] || exit 0 ;;
+            esac
+            _sz=$(hf_repo_size_bytes "$_repo" "$_gf")
             [ -n "$_sz" ] && [ "$_sz" -gt 0 ] 2>/dev/null || exit 0
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
                 "$_fam" "$_auth" "$_name" "$_par" "$_bits" "$_sz" > "$_out.$_i.part"
@@ -121,7 +159,7 @@ interp_fetch_catalog() {   # $1 = output cache file
 # comfortable variant, else that class's smallest - when not already used.
 interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
     local _cache="$1" _tab=$(/usr/bin/printf '\t')
-    local _sec _idx _heavy _fam _auth _repo _par _bits _size _desc _famdisp
+    local _sec _idx _heavy _fam _auth _repo _par _bits _size _desc _famdisp _blurb
     [ -s "$_cache" ] || return 1
     local _ram=$(machine_ram_bytes); [ "$_ram" -gt 0 ] 2>/dev/null || return 1
 
@@ -188,6 +226,10 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
             recommended) _desc="Near-top quality and much faster than the largest model - best choice for accuracy and speed." ;;
             faster)      _desc="Fastest - fewest parameters, so it runs quickest. Handles everyday text well, but can miss nuance the larger models catch." ;;
         esac
+        # Model-specific guidance first, section rationale second: the family sentence is what
+        # differentiates the up-to-three cards sharing a section.
+        _blurb=$(family_blurb "$_fam")
+        [ -n "$_blurb" ] && _desc="$_blurb $_desc"
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$_sec" "$_fam" "$_auth" "$_repo" "$_famdisp ${_par}B (${_bits}-bit)" "$_size" "$_heavy" "$_desc"
     done

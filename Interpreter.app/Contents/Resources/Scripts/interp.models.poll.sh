@@ -57,7 +57,7 @@ reflect_row() {   # $1=row $2=repo $3=catalog_size
         else "$dialog" "$window_uuid" "$_btn" omc_enable; fi
         # A finished download's work dir is no longer needed; the installed model speaks for itself.
         [ "$_state" = done ] && /bin/rm -rf "$_work"
-    elif [ -f "$MODELS_DIR/$_repo/config.json" ]; then
+    elif model_installed_at "$MODELS_DIR/$_repo"; then
         # Installed with no active download: make sure the badge/button reflect that (load also
         # does this, but a just-completed download that cleaned its work dir passes through here).
         _sig="installed"

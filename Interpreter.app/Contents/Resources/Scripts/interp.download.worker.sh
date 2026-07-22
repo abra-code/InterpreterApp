@@ -1,10 +1,11 @@
 # interp.download.worker.sh - background model downloader, one per download. UI-DECOUPLED: it
 # writes only state files under the model's work dir; a chooser-scoped poller (interp.models.poll)
 # reflects that state into whatever chooser window is open, so a download survives closing and
-# reopening the chooser. Streams every file of a Hugging Face repo into a staging dir with
-# resumable curl, then atomically moves the finished model into place (writing a Gemma NOTICE.txt
-# beside it). Interrupted downloads leave staging intact so a later click resumes. Not an OMC
-# command.  args: <hf_author> <repo_name>
+# reopening the chooser. Streams a Hugging Face repo into a staging dir with resumable curl -
+# every file for an mlx row, exactly the catalog-named quant file for a gguf row - then
+# atomically moves the finished model into place (writing a license NOTICE.txt beside it where
+# the family has one). Interrupted downloads leave staging intact so a later click resumes.
+# Not an OMC command.  args: <hf_author> <repo_name>
 #
 # State files in the work dir ($DOWNLOADS_DIR/<name>):
 #   state   : preparing | downloading | installing | done | error
@@ -21,6 +22,23 @@ dest="$MODELS_DIR/$name"
 work="$DOWNLOADS_DIR/$name"
 staging="$work/staging"
 tab=$(/usr/bin/printf '\t')
+
+# Engine and (for gguf) the single quant file, from the shipped catalog - the download shape
+# differs by engine: mlx streams the whole repo, gguf fetches exactly one file. The catalog is
+# the authority here because an uninstalled repo has no on-disk shape to detect yet.
+engine=mlx; gguf_file=""
+cat_row=$(/usr/bin/awk -F"$tab" -v a="$author" -v n="$name" \
+    '/^[[:space:]]*#/ { next } $2==a && $3==n { print $6 "\t" $7; exit }' "$INTERP_CATALOG_TSV")
+case "$cat_row" in
+    gguf"$tab"*) engine=gguf; gguf_file="${cat_row#gguf$tab}" ;;
+esac
+[ "$engine" = gguf ] && [ -z "$gguf_file" ] && { engine=mlx; }
+# A "repo/file.gguf" gguf_file names the REAL Hugging Face repo (the catalog's name column is
+# then only the local install name - one GGUF repo holds every quant, so each offered quant
+# needs its own install dir). Retarget the enumeration/download repo; dest/work stay on $name.
+case "$gguf_file" in
+    */*) repo="$author/${gguf_file%%/*}"; gguf_file="${gguf_file#*/}" ;;
+esac
 
 set_state() { /usr/bin/printf '%s' "$1" > "$work/state.tmp" && /bin/mv "$work/state.tmp" "$work/state"; }
 set_err()   { /usr/bin/printf '%s' "$1" > "$work/message"; set_state error; exit 0; }
@@ -39,6 +57,12 @@ set_state preparing
         /"type" =>/ { v=$0; sub(/.*"type" => "/,"",v); sub(/".*/,"",v); type=v }
         /"size" =>/ { if (!counted) { n=$3; gsub(/[^0-9]/,"",n); s=n; counted=1 } }
         END { flush() }' > "$work/files.tsv"
+
+# A gguf install downloads exactly its catalog-named quant file, nothing else from the repo.
+if [ "$engine" = gguf ]; then
+    /usr/bin/awk -F"$tab" -v f="$gguf_file" '$1==f { print; exit }' "$work/files.tsv" > "$work/files.one"
+    /bin/mv "$work/files.one" "$work/files.tsv"
+fi
 
 [ -s "$work/files.tsv" ] || set_err "Could not read the model file list. Click Download to retry."
 
@@ -89,25 +113,38 @@ trap - TERM INT
 
 [ "$rc" != 0 ] && set_err "Download interrupted. Click Download to resume."
 
-# --- install: move into place atomically, drop the Gemma NOTICE beside it ----
-# Both offered families are Gemma derivatives, so the mandatory Gemma notice applies to each;
-# only the creator credit line differs.
-case "$(model_family_of "$name")" in
-    milmmt) credit="This model (MiLMMT-46, by Xiaomi, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
-    *)      credit="This model (TranslateGemma, by Google, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
+# --- install: move into place atomically, drop the license NOTICE beside it ----
+# Per-family license notice: the Gemma families carry the mandatory Gemma notice (only the
+# creator credit differs); Hy-MT2 is Apache 2.0 (attribution, no distribution terms to
+# reproduce beyond the license pointer). A new family must add its own case here; an
+# unrecognized family gets no notice rather than a WRONG one.
+family=$(model_family_of "$name")
+case "$family" in
+    milmmt)         credit="This model (MiLMMT-46, by Xiaomi, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
+    translategemma) credit="This model (TranslateGemma, by Google, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
+    *)              credit="" ;;
 esac
 set_state installing
 /bin/rm -rf "$dest"
 /bin/mv "$staging" "$dest"
 mv_rc=$?
 if [ "$mv_rc" -eq 0 ]; then
-    /bin/cat > "$dest/NOTICE.txt" <<NOTICE
+    build="$([ "$engine" = gguf ] && echo "GGUF build" || echo "MLX build")"
+    if [ -n "$credit" ]; then
+        /bin/cat > "$dest/NOTICE.txt" <<NOTICE
 Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
 
 $credit Your use is also subject to the Gemma Prohibited Use Policy at ai.google.dev/gemma/prohibited_use_policy.
 
-MLX build downloaded from the Hugging Face repository $repo.
+$build downloaded from the Hugging Face repository $repo.
 NOTICE
+    elif [ "$family" = hymt ]; then
+        /bin/cat > "$dest/NOTICE.txt" <<NOTICE
+This model (Hy-MT2, by Tencent) is distributed under the Apache License, Version 2.0 - see apache.org/licenses/LICENSE-2.0
+
+$build downloaded from the Hugging Face repository $repo.
+NOTICE
+    fi
     set_state done
 else
     set_err "Could not save the model. Click Download to retry."

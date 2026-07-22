@@ -12,6 +12,16 @@ for ap in $(/usr/bin/pgrep -f "$AGENT_BIN" 2>/dev/null); do
     esac
 done
 
+# Terminate our bundled llama-servers (gguf engine) the same way. The per-spool watchdog would
+# reap them a couple of seconds after their broker dies anyway; this is the belt to that brace.
+for lp in $(/usr/bin/pgrep -f "$LLAMA_SERVER_BIN" 2>/dev/null); do
+    largs=$(/bin/ps -p "$lp" -o args= 2>/dev/null)
+    case "$largs" in
+        "$LLAMA_SERVER_BIN"|"$LLAMA_SERVER_BIN "*) /bin/kill -TERM "$lp" 2>/dev/null ;;
+        *) : ;;
+    esac
+done
+
 # Terminate the UI pollers and background download workers, verifying argv (a /bin/sh running
 # one of our scripts) so a recycled pid or an unrelated process that merely mentions the path is
 # never killed. A download killed here leaves its staging dir intact, so it resumes next time.

@@ -1,0 +1,35 @@
+# languages.hymt.tsv - the app languages Hy-MT2 supports, code <TAB> prompt name.
+# Names are the ENGLISH full names from the official Hy-MT2 supported-languages table
+# (huggingface.co/tencent/Hy-MT2-7B), which the English prompt template expects: plain
+# "Chinese" is the table's name for Simplified Chinese. Both Portuguese variants map to the
+# table's single "Portuguese". A code absent here is not offered in the pickers for this
+# family and a job naming it is refused (see family_prompt_lang_name).
+en	English
+es	Spanish
+zh-Hans	Chinese
+zh-Hant	Traditional Chinese
+fr	French
+de	German
+ja	Japanese
+ko	Korean
+it	Italian
+ru	Russian
+pt-BR	Portuguese
+pt-PT	Portuguese
+ar	Arabic
+hi	Hindi
+bn	Bengali
+nl	Dutch
+pl	Polish
+tr	Turkish
+uk	Ukrainian
+vi	Vietnamese
+th	Thai
+id	Indonesian
+cs	Czech
+he	Hebrew
+fa	Persian
+ta	Tamil
+te	Telugu
+ur	Urdu
+ms	Malay

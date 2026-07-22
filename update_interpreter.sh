@@ -21,6 +21,11 @@ ARCH="auto"
 SIGNING_IDENTITY="-"
 DO_BUILD="yes"
 DO_CODESIGN="yes"
+# llama.cpp engine (gguf models): opt-in provisioning, PINNED by default to the release the
+# mlx-agent map openai backend was verified against. Updating the pin means re-checking the
+# /tokenize + /completion field names that backend relies on.
+DO_LLAMA="no"
+LLAMA_VERSION="b10056"
 
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" >/dev/null 2>&1 && pwd)"
 AGENT_REPO="${MLX_AGENT_REPO:-}"
@@ -34,8 +39,10 @@ while [ $# -gt 0 ]; do
         --skip-build) DO_BUILD="no" ;;
         --identity=*) SIGNING_IDENTITY="${1#*=}" ;;
         --no-codesign) DO_CODESIGN="no" ;;
+        --with-llama) DO_LLAMA="yes" ;;
+        --llama-version=*) DO_LLAMA="yes"; LLAMA_VERSION="${1#*=}" ;;
         --help)
-            echo "Usage: $0 [--release] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--identity=CERT] [--no-codesign]"
+            echo "Usage: $0 [--release] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--identity=CERT] [--no-codesign] [--with-llama] [--llama-version=bNNNN]"
             exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -114,11 +121,39 @@ if [ "$DO_BUILD" = "yes" ]; then
 fi
 [ -x "$SUPPORT_DIR/pdftext" ] || fail "No pdftext at $SUPPORT_DIR/pdftext (build first, or drop --skip-build)."
 
+# ── 2c. llama.cpp engine (gguf models, opt-in) ────────────────────────────
+# Prebuilt upstream release tarball -> Contents/Support/Llama.cpp/ (llama-server + dylibs,
+# @rpath-linked so they only need to sit together). Same provisioning as AIChat V2, but pinned:
+# the map openai backend's wire mapping was verified against this build.
+LLAMA_DIR="$APP_BUNDLE/Contents/Support/Llama.cpp"
+if [ "$DO_LLAMA" = "yes" ]; then
+    case "$LLAMA_VERSION" in b[0-9]*) ;; *) fail "Invalid --llama-version: $LLAMA_VERSION (expected bNNNN)" ;; esac
+    case "$ARCH" in arm64) _lasset="llama-${LLAMA_VERSION}-bin-macos-arm64.tar.gz" ;;
+                    *)     _lasset="llama-${LLAMA_VERSION}-bin-macos-x64.tar.gz" ;; esac
+    _lwork="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/update-interp-llama.XXXXXX")" || fail "mktemp failed"
+    echo "  Downloading llama.cpp $LLAMA_VERSION"
+    /usr/bin/curl -L --fail --show-error --progress-bar -o "$_lwork/$_lasset" \
+        "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/${_lasset}" \
+        || fail "llama.cpp download failed"
+    /bin/mkdir -p "$_lwork/x" && /usr/bin/tar -xzf "$_lwork/$_lasset" -C "$_lwork/x" || fail "llama.cpp extract failed"
+    _lbin=$(/usr/bin/find "$_lwork/x" -name llama-server -type f | /usr/bin/head -1)
+    [ -n "$_lbin" ] || fail "llama-server not in the release archive"
+    /bin/rm -rf "$LLAMA_DIR" && /bin/mkdir -p "$LLAMA_DIR"
+    /bin/cp -f "$_lbin" "$LLAMA_DIR/llama-server" && /bin/chmod +x "$LLAMA_DIR/llama-server"
+    /usr/bin/find "$(/usr/bin/dirname "$_lbin")" -name "*.dylib" -maxdepth 1 -exec /bin/cp -f {} "$LLAMA_DIR/" \;
+    for _lic in "$_lwork/x/LICENSE" "$(/usr/bin/dirname "$_lbin")/../LICENSE"; do
+        [ -f "$_lic" ] && { /bin/cp -f "$_lic" "$LLAMA_DIR/LICENSE"; break; }
+    done
+    /bin/rm -rf "$_lwork"
+    echo "  ${GREEN}Deployed${RESET} llama.cpp $LLAMA_VERSION -> Contents/Support/Llama.cpp"
+fi
+
 # ── 3. Codesign ───────────────────────────────────────────────────────────
 if [ "$DO_CODESIGN" = "yes" ]; then
     for target in \
         "$MLX_DIR/mlx-swift_Cmlx.bundle" "$MLX_DIR/swift-crypto_Crypto.bundle" \
         "$MLX_DIR/swift-transformers_Hub.bundle" "$MLX_DIR/mlx-agent" \
+        "$LLAMA_DIR"/*.dylib "$LLAMA_DIR/llama-server" \
         "$SUPPORT_DIR/pdftext"; do
         [ -e "$target" ] || continue
         /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$target" >/dev/null 2>&1 \

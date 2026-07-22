@@ -20,6 +20,9 @@ RESOURCES_DIR="$OMC_APP_BUNDLE_PATH/Contents/Resources"
 SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
 AGENT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent"
 PDFTEXT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/pdftext"
+# llama.cpp engine for GGUF models (provisioned by update_interpreter.sh --with-llama; dylibs
+# sit beside the binary). Absent in an MLX-only build - gguf models then fail to spawn cleanly.
+LLAMA_SERVER_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/Llama.cpp/llama-server"
 
 # App support layout.
 APP_SUPPORT="$HOME/Library/Application Support/Interpreter"
@@ -76,14 +79,38 @@ disable_ctrl() { "$dialog" "$window_uuid" "$1" omc_disable; }
 # button. Use this for errors the user must see now, rather than only leaving a status-line trace.
 present_alert() { "$dialog" "$window_uuid" omc_window omc_present_alert "$1" "$2" "OK::"; }
 
-# Resolve the model directory: the first translategemma-* dir under Models with a config.json,
-# else any model dir with a config.json. Symlinks are resolved (the weight loader needs a real
-# path). Prints the resolved path and returns 0, or returns 1 when no model is present.
+# True when a directory holds an installed model of EITHER engine: an MLX safetensors dir
+# (config.json) or a GGUF install (a single <file>.gguf inside). The by-shape test is the same
+# idea AIChat's model_engine uses; every "is this installed" check routes through here so the
+# two engines stay indistinguishable to the rest of the app.
+model_installed_at() {   # $1 = model dir
+    [ -f "$1/config.json" ] && return 0
+    set -- "$1"/*.gguf
+    [ -f "$1" ]
+}
+
+# Engine of an installed model dir, by shape: mlx (config.json) or gguf (a .gguf file).
+# Defaults to mlx so existing callers keep their exact behavior for anything unrecognized.
+model_engine_of() {   # $1 = model dir
+    if [ -f "$1/config.json" ]; then echo mlx; return 0; fi
+    set -- "$1"/*.gguf
+    if [ -f "$1" ]; then echo gguf; else echo mlx; fi
+}
+
+# The (first) .gguf file inside a gguf model dir; empty when none.
+gguf_file_in() {   # $1 = model dir
+    set -- "$1"/*.gguf
+    [ -f "$1" ] && /usr/bin/printf '%s' "$1"
+}
+
+# Resolve the model directory: the first translategemma-* dir under Models holding a model,
+# else any dir holding one (either engine). Symlinks are resolved (the weight loader needs a
+# real path). Prints the resolved path and returns 0, or returns 1 when no model is present.
 resolve_model_dir() {
     local _d
     for _d in "$MODELS_DIR"/*translategemma*/ "$MODELS_DIR"/*/; do
         [ -d "$_d" ] || continue
-        [ -f "${_d}config.json" ] || continue
+        model_installed_at "${_d%/}" || continue
         ( cd "$_d" && pwd -P )
         return 0
     done
@@ -100,18 +127,20 @@ model_family_of() {   # $1 = model dir path or repo name
     case "$_b" in
         *translategemma*) echo translategemma ;;
         *milmmt*)         echo milmmt ;;
+        *hy-mt*|*hymt*)   echo hymt ;;
         *)                echo generic ;;
     esac
 }
 
-# Every installed model directory (has a config.json), one resolved absolute path per line, in
-# stable lexical order. translategemma-* first, then any other model dir (same order as
-# resolve_model_dir), de-duplicated so a translategemma dir is not also listed by the catch-all.
+# Every installed model directory (either engine - see model_installed_at), one resolved
+# absolute path per line, in stable lexical order. translategemma-* first, then any other model
+# dir (same order as resolve_model_dir), de-duplicated so a translategemma dir is not also
+# listed by the catch-all.
 list_model_dirs() {
     local _seen="" _d _r
     for _d in "$MODELS_DIR"/*translategemma*/ "$MODELS_DIR"/*/; do
         [ -d "$_d" ] || continue
-        [ -f "${_d}config.json" ] || continue
+        model_installed_at "${_d%/}" || continue
         _r=$( cd "$_d" && pwd -P )
         case "$_seen" in *"[$_r]"*) continue ;; esac
         _seen="$_seen[$_r]"
@@ -126,20 +155,59 @@ list_model_dirs() {
 model_display_label() {   # $1 = model dir path
     local _b="$(/usr/bin/basename "$1")" _p="" _q="" _f=""
     local _l=$(/usr/bin/printf '%s' "$_b" | /usr/bin/tr '[:upper:]' '[:lower:]')
-    case "$_l" in *-27b-*) _p="27B" ;; *-12b-*) _p="12B" ;; *-4b-*) _p="4B" ;; esac
+    case "$_l" in *-27b-*) _p="27B" ;; *-12b-*) _p="12B" ;; *-4b-*) _p="4B" ;; *-7b-*) _p="7B" ;; *-1.8b-*) _p="1.8B" ;; esac
     case "$_l" in *8bit) _q="8-bit" ;; *6bit) _q="6-bit" ;; *5bit) _q="5-bit" ;; *4bit) _q="4-bit" ;; esac
     case "$(model_family_of "$_b")" in
         translategemma) _f="TranslateGemma" ;;
         milmmt)         _f="MiLMMT-46" ;;
+        hymt)           _f="Hy-MT2" ;;
     esac
     if [ -n "$_f" ] && [ -n "$_p" ] && [ -n "$_q" ]; then /usr/bin/printf '%s %s (%s)' "$_f" "$_p" "$_q"; else /usr/bin/printf '%s' "$_b"; fi
 }
 
 # Spawn the long-lived map broker for a model into a spool, backgrounded with /dev/null stdin
 # (it does NOT treat that as parent-death; it exits when the spool dir disappears or is reaped).
-# Prints the broker's pid. TranslateGemma conversions need "<end_of_turn>" unioned into the
-# stop set (their generation_config omits it); MiLMMT declares its stop tokens itself.
+# Prints the broker's pid.
+#
+# ENGINE DISPATCH (by model-dir shape, see model_engine_of):
+#   mlx  - mlx-agent map loads the safetensors dir in-process. TranslateGemma conversions need
+#          "<end_of_turn>" unioned into the stop set (their generation_config omits it); MiLMMT
+#          declares its stop tokens itself.
+#   gguf - the applet launches the bundled llama-server on a free localhost port with the dir's
+#          .gguf (spawn_llama_server below), then mlx-agent map --backend openai serves the SAME
+#          spool from it. The broker owns the load wait: llama-server answers /health 503 while
+#          loading and map's openai engine polls patiently, keeping status.json in "loading" -
+#          so this function returns immediately either way and the poller's UI flow is identical
+#          for both engines. The server's lifetime is tied to the broker's by a watchdog.
 spawn_broker() {   # $1 = spool dir, $2 = model dir
+    local _gguf _port _bpid
+    if [ "$(model_engine_of "$2")" = gguf ]; then
+        _gguf=$(gguf_file_in "$2")
+        if [ -z "$_gguf" ] || [ ! -x "$LLAMA_SERVER_BIN" ]; then
+            # No .gguf (half-installed) or no bundled llama.cpp: spawn nothing. The poller keeps
+            # showing "loading" and retries next tick; the condition is diagnosable from this
+            # marker (overwritten, not appended - the retry ticks must not grow a log).
+            /usr/bin/printf 'gguf spawn failed: gguf=%s llama-server=%s\n' \
+                "${_gguf:-none}" "$LLAMA_SERVER_BIN" > "$1/gguf.spawn.error"
+            echo ""
+            return 0
+        fi
+        _port=$(spawn_llama_server "$1" "$_gguf") || { echo ""; return 0; }
+        "$AGENT_BIN" map --backend openai --base-url "http://127.0.0.1:$_port/v1" --spool "$1" \
+            --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
+            < /dev/null >> "$1/agent.log" 2>&1 &
+        _bpid=$!
+        # Watchdog: when the broker dies - model switch, app quit, spool reaped - take the
+        # server with it, whatever the death path was. Checks every 2s; the tiny subshell holds
+        # no window state. The server pid is re-verified by argv before the kill (kill_llama_pid)
+        # so a recycled pid is never signalled.
+        (
+            while /bin/kill -0 "$_bpid" 2>/dev/null; do /bin/sleep 2; done
+            kill_llama_pid "$(/bin/cat "$1/llama.pid" 2>/dev/null)"
+        ) < /dev/null > /dev/null 2>&1 &
+        echo "$_bpid"
+        return 0
+    fi
     if [ "$(model_family_of "$2")" = translategemma ]; then
         "$AGENT_BIN" map --model "$2" --spool "$1" \
             --extra-eos-token "$EXTRA_EOS" --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
@@ -150,6 +218,49 @@ spawn_broker() {   # $1 = spool dir, $2 = model dir
             < /dev/null >> "$1/agent.log" 2>&1 &
     fi
     echo $!
+}
+
+# Launch the bundled llama-server for a .gguf on a free localhost port. Prints the port (and
+# records llama.pid/llama.port in the spool); returns 1 without printing when no port bound.
+# Any stale server recorded in this spool is retired FIRST and waited on, so a model switch
+# never holds two ggufs in memory (mirrors ensure_broker's wait for the old MLX broker).
+#
+# Flags mirror AIChat V2's launch line: --jinja renders the gguf's own chat template
+# server-side (the map broker never templates client-side); q8_0 KV cache halves context
+# memory at negligible quality cost; --sleep-idle-seconds matches the MLX engine's idle-unload
+# policy. Memory fitting is left to llama-server's own --fit default - Interpreter runs one
+# model per window, not a fleet, so AIChat's sibling-aware budget is not needed.
+spawn_llama_server() {   # $1 = spool dir, $2 = gguf file ; prints the port
+    local _spool="$1" _gguf="$2" _old _port _p _w _spid
+    _old=$(/bin/cat "$_spool/llama.pid" 2>/dev/null)
+    if [ -n "$_old" ]; then
+        kill_llama_pid "$_old"
+        _w=0
+        while pid_alive "$_old" && [ "$_w" -lt 25 ]; do /bin/sleep 0.2; _w=$(( _w + 1 )); done
+    fi
+    /bin/rm -f "$_spool/llama.pid" "$_spool/llama.port"
+    _port=""
+    for _p in 8321 8322 8323 8324 8325 8326 8327 8328; do
+        if ! /usr/bin/nc -z 127.0.0.1 "$_p" 2>/dev/null; then _port="$_p"; break; fi
+    done
+    [ -n "$_port" ] || return 1
+    "$LLAMA_SERVER_BIN" --host 127.0.0.1 --port "$_port" --model "$_gguf" --jinja \
+        --cache-type-k q8_0 --cache-type-v q8_0 --sleep-idle-seconds 600 \
+        < /dev/null >> "$_spool/llama.log" 2>&1 &
+    _spid=$!
+    /usr/bin/printf '%s' "$_spid"  > "$_spool/llama.pid"
+    /usr/bin/printf '%s' "$_port" > "$_spool/llama.port"
+    echo "$_port"
+}
+
+# TERM a pid only after confirming argv[0] is our bundled llama-server (recycled-pid safety,
+# the llama twin of kill_broker_pid).
+kill_llama_pid() {   # $1 = pid
+    case "$1" in ''|*[!0-9]*) return 0 ;; esac
+    local _a="$(/bin/ps -p "$1" -o args= 2>/dev/null)"
+    case "$_a" in
+        "$LLAMA_SERVER_BIN"|"$LLAMA_SERVER_BIN "*) /bin/kill -TERM "$1" 2>/dev/null ;;
+    esac
 }
 
 # TERM a pid only after confirming argv[0] is our bundled mlx-agent, so a recycled pid is safe.
@@ -291,24 +402,29 @@ populate_language_pickers() {   # $1 = spool
 #     card - "Translate this from <From> to <To>:\n<From>: ...\n<To>:" with add_special_tokens
 #     false and ENGLISH LANGUAGE NAMES, not codes. The \n in the heredoc below are literal
 #     two-character sequences, which is exactly what the JSON string needs.
-# Returns non-zero (publishing nothing) only when the milmmt path cannot resolve both language
-# names - the caller surfaces that as a UI error.
+#   - hymt: Hy-MT2 IS a chat-template family, but takes a plain instruction string (the official
+#     model-card English template, target language by ENGLISH NAME), not TranslateGemma's
+#     structured content. The template names only the target; the source name is still resolved
+#     as the support check.
+# Returns non-zero (publishing nothing) only when a named-language path (milmmt, hymt) cannot
+# resolve its language names - the caller surfaces that as a UI error.
 publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; source text on STDIN
     local _spool="$1" _from="$2" _to="$3"
     local _family=$(model_family_of "$(/bin/cat "$_spool/model.dir" 2>/dev/null)")
     local _from_name="" _to_name=""
-    if [ "$_family" = milmmt ]; then
+    case "$_family" in milmmt|hymt)
         # Names come from the family's language file (its prompt names differ from the display
-        # names for Portuguese/Norwegian), which doubles as the support check: an unsupported
-        # code resolves to nothing and the job is refused rather than mistranslated.
+        # names - Portuguese/Norwegian for MiLMMT, plain "Chinese" for Hy-MT2), which doubles as
+        # the support check: an unsupported code resolves to nothing and the job is refused
+        # rather than mistranslated.
         _from_name=$(family_prompt_lang_name "$_family" "$_from")
         _to_name=$(family_prompt_lang_name "$_family" "$_to")
         if [ -z "$_from_name" ] || [ -z "$_to_name" ]; then
             # Swallow stdin so the caller's pipe never blocks or SIGPIPEs, then report failure.
             /bin/cat > /dev/null
             return 1
-        fi
-    fi
+        fi ;;
+    esac
 
     local _epoch=$(pb_get "interp_epoch_${window_uuid}")
     case "$_epoch" in ''|*[!0-9]*) _epoch=0 ;; esac
@@ -321,6 +437,10 @@ publish_translation_job() {   # $1 = spool, $2 = from code, $3 = to code ; sourc
     if [ "$_family" = milmmt ]; then
         /bin/cat > "$_spool/job.json.tmp" <<EOF
 {"epoch":$_epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$_srcfile","add_special_tokens":false,"prompt":"Translate this from $_from_name to $_to_name:\n$_from_name: {{chunk}}\n$_to_name:"}
+EOF
+    elif [ "$_family" = hymt ]; then
+        /bin/cat > "$_spool/job.json.tmp" <<EOF
+{"epoch":$_epoch,"output":"stitch","budget_tokens":$BUDGET_TOKENS,"text_file":"$_srcfile","messages":[{"role":"user","content":"Translate the following text into $_to_name. Note that you should only output the translated result without any additional explanation:\n\n{{chunk}}"}]}
 EOF
     else
         /bin/cat > "$_spool/job.json.tmp" <<EOF

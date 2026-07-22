@@ -22,8 +22,8 @@ $line
 EOF
 [ -n "$repo" ] && [ -n "$author" ] || exit 0
 
-# Already installed (a stale window, or a race): nothing to do.
-if [ -f "$MODELS_DIR/$repo/config.json" ]; then
+# Already installed (a stale window, or a race): nothing to do. Either engine counts.
+if model_installed_at "$MODELS_DIR/$repo"; then
     "$dialog" "$window_uuid" "$badge_id" "Installed"
     "$dialog" "$window_uuid" "$btn_id" omc_disable
     exit 0
