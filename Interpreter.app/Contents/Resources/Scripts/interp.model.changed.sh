@@ -45,4 +45,10 @@ cur=$(/bin/cat "$spool/model.dir" 2>/dev/null)
 
 /usr/bin/printf '%s' "$sel" > "$spool/model.dir.tmp" && /bin/mv "$spool/model.dir.tmp" "$spool/model.dir"
 
+# Persist the choice (by directory NAME, not path, so a moved Models dir cannot pin a dead
+# path) - new windows and the next launch restore it instead of falling back to the first
+# installed model. Only genuine user picks reach this line (the quiet window filtered the
+# poller's own refreshes above), so an auto-selection never overwrites the preference.
+/usr/bin/defaults write "$BUNDLE_ID" ModelName "$(/usr/bin/basename "$sel")"
+
 exit 0

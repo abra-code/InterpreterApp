@@ -62,13 +62,20 @@ sync_models() {
     /usr/bin/printf '%s' "$(( _now + 2 ))" > "$spool/picker_quiet"
     "$dialog" "$window_uuid" "$MODEL_PICKER" omc_set_property "options" "$_opts"
 
-    # Auto-select: if nothing is chosen yet, or the chosen model is gone, pick the first
-    # installed one. This is the first-run / post-download pickup path.
+    # Auto-select: if nothing is chosen yet, or the chosen model is gone, restore the SAVED
+    # last-used model (defaults ModelName, written by interp.model.changed on a genuine user
+    # pick; matched by directory basename), falling back to the first installed one. This is
+    # the window-open / first-run / post-download pickup path - restoring the preference here
+    # also keeps a second window (text + document open together) on the SAME model, whose
+    # mmap'd weights the two brokers then share instead of stacking two models in memory.
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
     local _sel_known=0
     [ -n "$_sel" ] && /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null && _sel_known=1
     if [ "$_sel_known" = 0 ]; then
-        _sel="$(/usr/bin/head -1 "$spool/modelpaths" 2>/dev/null)"
+        local _saved="$(/usr/bin/defaults read "$BUNDLE_ID" ModelName 2>/dev/null)"
+        _sel=""
+        [ -n "$_saved" ] && _sel="$(/usr/bin/awk -F/ -v n="$_saved" '$NF==n { print; exit }' "$spool/modelpaths" 2>/dev/null)"
+        [ -n "$_sel" ] || _sel="$(/usr/bin/head -1 "$spool/modelpaths" 2>/dev/null)"
         if [ -n "$_sel" ]; then
             /usr/bin/printf '%s' "$_sel" > "$spool/model.dir.tmp" && /bin/mv "$spool/model.dir.tmp" "$spool/model.dir"
         else

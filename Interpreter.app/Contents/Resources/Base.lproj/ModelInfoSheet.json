@@ -1,0 +1,23 @@
+{
+  "type": "VStack",
+  "properties": { "spacing": 12, "padding": 16, "frame": { "minWidth": 480, "idealWidth": 540, "minHeight": 300, "idealHeight": 400 } },
+  "children": [
+    {
+      "type": "ScrollView",
+      "properties": { "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+      "content": {
+        "type": "RichText",
+        "id": 4010,
+        "properties": { "markdown": "", "frame": { "maxWidth": "infinity", "alignment": "leading" } }
+      }
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        { "type": "Spacer" },
+        { "type": "Button", "id": 4020, "properties": { "title": "Close", "buttonStyle": "borderedProminent", "role": "cancel", "keyboardShortcut": { "key": "escape" }, "actionID": "interp.models.info.close" } }
+      ]
+    }
+  ]
+}

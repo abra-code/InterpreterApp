@@ -183,6 +183,11 @@
     },
     {
       "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.info.close",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
       "COMMAND_ID": "interp.models.refresh",
       "EXECUTION_MODE": "exe_script_file"
     },

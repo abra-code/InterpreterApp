@@ -31,21 +31,38 @@ reflect_row() {   # $1=row $2=repo $3=catalog_size
     if [ -f "$_work/state" ]; then
         _state=$(/bin/cat "$_work/state" 2>/dev/null)
         _total=$(/bin/cat "$_work/total" 2>/dev/null); case "$_total" in ''|*[!0-9]*) _total="$_csize" ;; esac
+        # An in-flight state with a DEAD worker (SIGKILL, crash - the worker's own TERM trap
+        # normally converts an app-quit into state=error itself) shows as interrupted and
+        # re-enables the button; the download handler's matching liveness check then respawns
+        # the worker, whose curl -C - resumes the partial. For "preparing" the pid file must
+        # EXIST to rule the worker dead: the button handler writes it under its dispatch lock,
+        # but a legacy stuck dir might have neither pid nor progress worth special-casing.
         case "$_state" in
-            preparing)  _text="Preparing…"; _btnstate=off ;;
-            installing) _text="Finishing…"; _btnstate=off ;;
+            preparing)
+                if [ -f "$_work/worker.pid" ] && ! download_worker_alive "$_work"; then
+                    _text="Download interrupted - click Download to resume."; _btnstate=on
+                else
+                    _text="Preparing…"; _btnstate=off
+                fi ;;
+            installing)
+                if download_worker_alive "$_work"; then _text="Finishing…"; _btnstate=off
+                else _text="Download interrupted - click Download to resume."; _btnstate=on; fi ;;
             error)      _text=$(/bin/cat "$_work/message" 2>/dev/null); _btnstate=on ;;
             done)       _text="Installed - $(bytes_to_gb "$_total")"; _btnstate=off ;;
             downloading)
-                _got=$(/usr/bin/du -sk "$_work/staging" 2>/dev/null | /usr/bin/awk '{ print $1 * 1024; exit }')
-                case "$_got" in ''|*[!0-9]*) _got=0 ;; esac
-                if [ "$_total" -ge 1 ] 2>/dev/null; then
-                    _pct=$(( _got * 100 / _total )); [ "$_pct" -gt 100 ] && _pct=100
-                    _text="Downloading $(bytes_to_gb "$_got") of $(bytes_to_gb "$_total") ($_pct%)…"
+                if download_worker_alive "$_work"; then
+                    _got=$(/usr/bin/du -sk "$_work/staging" 2>/dev/null | /usr/bin/awk '{ print $1 * 1024; exit }')
+                    case "$_got" in ''|*[!0-9]*) _got=0 ;; esac
+                    if [ "$_total" -ge 1 ] 2>/dev/null; then
+                        _pct=$(( _got * 100 / _total )); [ "$_pct" -gt 100 ] && _pct=100
+                        _text="Downloading $(bytes_to_gb "$_got") of $(bytes_to_gb "$_total") ($_pct%)…"
+                    else
+                        _text="Downloading $(bytes_to_gb "$_got")…"
+                    fi
+                    _btnstate=off
                 else
-                    _text="Downloading $(bytes_to_gb "$_got")…"
-                fi
-                _btnstate=off ;;
+                    _text="Download interrupted - click Download to resume."; _btnstate=on
+                fi ;;
             *) return 0 ;;
         esac
         _sig="$_state|$_text|$_btnstate"

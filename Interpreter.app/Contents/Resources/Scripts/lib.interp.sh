@@ -180,7 +180,7 @@ model_display_label() {   # $1 = model dir path
 #          so this function returns immediately either way and the poller's UI flow is identical
 #          for both engines. The server's lifetime is tied to the broker's by a watchdog.
 spawn_broker() {   # $1 = spool dir, $2 = model dir
-    local _gguf _port _bpid
+    local _gguf _port _bpid _lpid
     if [ "$(model_engine_of "$2")" = gguf ]; then
         _gguf=$(gguf_file_in "$2")
         if [ -z "$_gguf" ] || [ ! -x "$LLAMA_SERVER_BIN" ]; then
@@ -199,11 +199,14 @@ spawn_broker() {   # $1 = spool dir, $2 = model dir
         _bpid=$!
         # Watchdog: when the broker dies - model switch, app quit, spool reaped - take the
         # server with it, whatever the death path was. Checks every 2s; the tiny subshell holds
-        # no window state. The server pid is re-verified by argv before the kill (kill_llama_pid)
-        # so a recycled pid is never signalled.
+        # no window state. The server pid VALUE is captured NOW: the common broker-death cause
+        # is the spool being deleted on window close, so reading llama.pid after the death
+        # would find nothing and leak the server. The pid is re-verified by argv before the
+        # kill (kill_llama_pid) so a recycled pid is never signalled.
+        _lpid=$(/bin/cat "$1/llama.pid" 2>/dev/null)
         (
             while /bin/kill -0 "$_bpid" 2>/dev/null; do /bin/sleep 2; done
-            kill_llama_pid "$(/bin/cat "$1/llama.pid" 2>/dev/null)"
+            kill_llama_pid "$_lpid"
         ) < /dev/null > /dev/null 2>&1 &
         echo "$_bpid"
         return 0

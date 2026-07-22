@@ -41,6 +41,7 @@
             "properties": { "hidden": true, "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } },
             "children": [
               { "type": "Text", "id": 1101, "properties": { "text": "Best Quality", "font": "headline", "foregroundStyle": "secondary" } },
+              { "type": "Text", "id": 1103, "properties": { "text": "Highest quality, but slower and more memory-demanding. A model marked Heavy uses most of this Mac's memory, so other apps may slow down while it runs.", "font": "caption", "foregroundStyle": "secondary" } },
               { "type": "VStack", "id": 1102, "properties": { "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } }, "children": [] }
             ]
           },
@@ -50,6 +51,7 @@
             "properties": { "hidden": true, "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } },
             "children": [
               { "type": "Text", "id": 1201, "properties": { "text": "Recommended", "font": "headline", "foregroundStyle": "secondary" } },
+              { "type": "Text", "id": 1203, "properties": { "text": "Near-top quality and much faster than the largest models - the best balance of accuracy and speed for everyday use.", "font": "caption", "foregroundStyle": "secondary" } },
               { "type": "VStack", "id": 1202, "properties": { "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } }, "children": [] }
             ]
           },
@@ -59,19 +61,11 @@
             "properties": { "hidden": true, "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } },
             "children": [
               { "type": "Text", "id": 1301, "properties": { "text": "Faster", "font": "headline", "foregroundStyle": "secondary" } },
+              { "type": "Text", "id": 1303, "properties": { "text": "Fewest parameters, so they run quickest. Handle everyday text well, but can miss nuance the larger models catch.", "font": "caption", "foregroundStyle": "secondary" } },
               { "type": "VStack", "id": 1302, "properties": { "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } }, "children": [] }
             ]
           }
         ]
-      }
-    },
-    {
-      "type": "Text",
-      "id": 903,
-      "properties": {
-        "markdown": "These are Google Gemma models or Gemma derivatives (TranslateGemma by Google, MiLMMT-46 by Xiaomi), used under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and [Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy).",
-        "font": "caption",
-        "foregroundStyle": "secondary"
       }
     },
     { "type": "Divider" },

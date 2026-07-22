@@ -17,6 +17,7 @@ translategemma	mlx-community	translategemma-27b-it-8bit	27	8
 translategemma	mlx-community	translategemma-27b-it-6bit	27	6
 translategemma	mlx-community	translategemma-27b-it-4bit	27	4
 translategemma	mlx-community	translategemma-12b-it-8bit	12	8
+translategemma	mlx-community	translategemma-12b-it-6bit	12	6
 translategemma	mlx-community	translategemma-12b-it-4bit	12	4
 translategemma	mlx-community	translategemma-4b-it-8bit	4	8
 translategemma	mlx-community	translategemma-4b-it-4bit	4	4

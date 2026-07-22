@@ -7,11 +7,13 @@
 # The curation turns the machine's RAM and the live per-variant download sizes into grouped,
 # outcome-framed SECTIONS - Best Quality / Recommended / Faster - with up to one card per
 # family in each section, rather than exposing params/bit-width. Guiding rules: for a fixed
-# memory budget, MORE PARAMETERS at 4-bit beats FEWER at 8-bit, so a family's recommended
-# pick is its largest-params 4-bit model that fits with comfortable headroom. But quant bits
-# are never themselves the speed lever - a Faster pick earns its speed from fewer params, so
-# within the smallest params class the HIGHEST quant that still fits comfortably wins (a 4B
-# 8-bit translates visibly better than a 4B 4-bit at nearly the same speed).
+# memory budget, MORE PARAMETERS at modest bits beat FEWER at 8-bit, so a family's recommended
+# pick is its highest-ranked variant at bits <= 6 that fits with comfortable headroom (6-bit
+# earned parity with 8-bit in the quant bake-offs, so it outranks 4-bit for the same params;
+# 8-bit is reserved for Best). Quant bits are never themselves the speed lever - a Faster pick
+# earns its speed from fewer params, so within the smallest params class the HIGHEST quant
+# that still fits comfortably wins (a 4B 8-bit translates visibly better than a 4B 4-bit at
+# nearly the same speed).
 
 [ -n "${__INTERP_MODELS_LIB:-}" ] && return 0
 __INTERP_MODELS_LIB=1
@@ -33,7 +35,7 @@ family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; mil
 family_blurb() {   # $1 = family
     case "$1" in
         translategemma) echo "Google's all-round translator: every app language, strongest European coverage." ;;
-        milmmt)         echo "Xiaomi's translator: matches TranslateGemma on European languages, but fewer languages (no Ukrainian)." ;;
+        milmmt)         echo "Xiaomi's translator: matches TranslateGemma on European languages, but fewer languages." ;;
         hymt)           echo "Tencent's translator: the top pick for Chinese and Japanese; for European languages prefer the other families." ;;
         *)              echo "" ;;
     esac
@@ -180,8 +182,20 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
                 cnt = 0
                 for (i=1; i<=N; i++) if (fam[i]==fname && peak(size[i]) <= offer_ceil) { cnt++; fit[cnt]=i }
                 if (cnt==0) continue
+                # Recommended = the highest-quality COMFORTABLE variant at bits <= 6 (catalog
+                # order is the quality ranking, so first match wins). 6-bit is eligible because
+                # the quant bake-offs showed it quality-indistinguishable from 8-bit at ~3/4 the
+                # size; 8-bit stays Best-only so the two sections keep distinct meanings.
+                # PARAMS FLOOR, ratio-bounded: dropping ONE params class below the second-best
+                # offerable is fine - that is the Recommended slot doing its job as the fast
+                # daily driver (a 27B is really much slower than a 12B; user-confirmed) - but
+                # collapsing further (12B -> 4B is 3x fewer params) loses too much quality, so
+                # a drop past 2.5x clamps back to the second-best offerable even though it sits
+                # slightly over the comfort line. 2.5 divides the catalog class ratios (2.25 for
+                # 27->12, 3+ for 12->4 and 7->1.8).
                 rec = 0
-                for (k=1; k<=cnt; k++) { i=fit[k]; if (bits[i]==4 && peak(size[i]) <= comfy_ceil) { rec=i; break } }
+                for (k=1; k<=cnt; k++) { i=fit[k]; if (bits[i]+0 <= 6 && peak(size[i]) <= comfy_ceil) { rec=i; break } }
+                if (rec != 0 && cnt >= 2 && par[fit[2]] + 0 > 2.5 * (par[rec] + 0)) rec = fit[2]
                 if (rec==0) rec = (cnt>=2 ? fit[2] : fit[1])
                 best = (fit[1]!=rec ? fit[1] : 0)
                 # Faster gets its speed from FEWER PARAMS, not fewer bits: within the
@@ -216,24 +230,28 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
         _bits=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $7; exit}' "$_rows")
         _size=$(/usr/bin/awk -F'\t' -v i="$_idx" '$1=="ROW" && $2==i {print $8; exit}' "$_rows")
         _famdisp=$(family_display_name "$_fam")
-        case "$_sec" in
-            best)
-                if [ "$_heavy" = 1 ]; then
-                    _desc="Highest quality, but heavy and much slower - uses most of your memory, so other apps may slow down."
-                else
-                    _desc="Highest quality, but much slower and more memory-demanding than the recommended model."
-                fi ;;
-            recommended) _desc="Near-top quality and much faster than the largest model - best choice for accuracy and speed." ;;
-            faster)      _desc="Fastest - fewest parameters, so it runs quickest. Handles everyday text well, but can miss nuance the larger models catch." ;;
-        esac
-        # Model-specific guidance first, section rationale second: the family sentence is what
-        # differentiates the up-to-three cards sharing a section.
-        _blurb=$(family_blurb "$_fam")
-        [ -n "$_blurb" ] && _desc="$_blurb $_desc"
+        # The card description is the family blurb ALONE: the section rationale ("Highest
+        # quality, but...") is stated once under each section header in models.window.json
+        # (ids 1103/1203/1303), not repeated on every card; the Heavy badge plus the Best
+        # section's subtitle carry the memory caveat.
+        _desc=$(family_blurb "$_fam")
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$_sec" "$_fam" "$_auth" "$_repo" "$_famdisp ${_par}B (${_bits}-bit)" "$_size" "$_heavy" "$_desc"
     done
     /bin/rm -f "$_rows"
+}
+
+# True when the download worker recorded in a work dir is still running. The spawner writes the
+# worker's pid to worker.pid; argv is re-verified so a recycled pid is never mistaken for a live
+# worker. A missing/invalid pid file counts as dead - which also classifies work dirs from
+# before this file existed as resumable, exactly right.
+download_worker_alive() {   # $1 = work dir
+    local _pid=$(/bin/cat "$1/worker.pid" 2>/dev/null)
+    case "$_pid" in ''|*[!0-9]*) return 1 ;; esac
+    case "$(/bin/ps -p "$_pid" -o args= 2>/dev/null)" in
+        *interp.download.worker.sh*) return 0 ;;
+    esac
+    return 1
 }
 
 # Look up one curated card row by its 1-based row number. Prints the row (8 tab-separated

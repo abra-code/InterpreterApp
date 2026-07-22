@@ -41,10 +41,25 @@ case "$gguf_file" in
 esac
 
 set_state() { /usr/bin/printf '%s' "$1" > "$work/state.tmp" && /bin/mv "$work/state.tmp" "$work/state"; }
-set_err()   { /usr/bin/printf '%s' "$1" > "$work/message"; set_state error; exit 0; }
+set_err()   { /usr/bin/printf '%s' "$1" > "$work/message"; /bin/rm -f "$work/worker.pid"; set_state error; exit 0; }
 
 /bin/mkdir -p "$staging"
 set_state preparing
+
+# A TERM/INT anywhere in the preparing/downloading span (app quit reaps this worker) must leave
+# a RESUMABLE record, not a stuck in-flight state: kill the transfer, mark the interruption, and
+# let the error state re-enable the card's Download button (staging keeps the partial bytes;
+# curl -C - picks them up on the next click). The spawner records our pid in worker.pid so the
+# button handler and poller can also detect a worker that died without this trap (SIGKILL).
+curlpid=""
+cleanup() {
+    [ -n "$curlpid" ] && /bin/kill -TERM "$curlpid" 2>/dev/null
+    /usr/bin/printf '%s' "Download interrupted. Click Download to resume." > "$work/message"
+    /bin/rm -f "$work/worker.pid"
+    set_state error
+    exit 0
+}
+trap cleanup TERM INT
 
 # --- enumerate the repo's files (path <TAB> size, files only) ----------------
 /usr/bin/curl -fsSL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
@@ -77,11 +92,8 @@ if [ "$free" -gt 0 ] && [ "$free" -lt $(( total + total / 10 )) ]; then
     set_err "Not enough free disk space (needs about $(bytes_to_gb "$total"))."
 fi
 
-# --- download all files (curl as a waited-on child, killable via the trap) ---
+# --- download all files (curl as a waited-on child, killable via the trap set above) ---
 set_state downloading
-curlpid=""
-cleanup() { [ -n "$curlpid" ] && /bin/kill -TERM "$curlpid" 2>/dev/null; exit 0; }
-trap cleanup TERM INT
 
 rc=0
 while IFS="$tab" read -r p s; do
@@ -150,4 +162,5 @@ else
     set_err "Could not save the model. Click Download to retry."
 fi
 
+/bin/rm -f "$work/worker.pid"
 exit 0

@@ -40,9 +40,16 @@ work="$DOWNLOADS_DIR/$repo"
 trap '/bin/rmdir "$work/dispatch.lock" 2>/dev/null' EXIT
 
 # Already downloading (or installing): the poller is showing its progress; do not start another.
+# But an in-flight state whose worker is DEAD (app quit killed it mid-transfer, or a crash) is a
+# stuck record, not an active download - fall through and respawn; the worker's curl -C - resumes
+# the partial bytes left in staging. Liveness is argv-verified via worker.pid (written below
+# under this same dispatch lock, so a click can never see a live worker's state without its pid).
 st=$(/bin/cat "$work/state" 2>/dev/null)
 case "$st" in
-    preparing|downloading|installing) "$dialog" "$window_uuid" "$btn_id" omc_disable; exit 0 ;;
+    preparing|downloading|installing)
+        if download_worker_alive "$work"; then
+            "$dialog" "$window_uuid" "$btn_id" omc_disable; exit 0
+        fi ;;
 esac
 
 # Disk preflight against the Models volume (need the download plus ~10% slack for the atomic
@@ -61,5 +68,6 @@ fi
 
 /bin/sh "$SCRIPTS_DIR/interp.download.worker.sh" "$author" "$repo" \
     < /dev/null >> "$DOWNLOADS_DIR/$repo.log" 2>&1 &
+/usr/bin/printf '%s' $! > "$work/worker.pid"
 
 exit 0
