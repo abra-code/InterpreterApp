@@ -1,20 +1,30 @@
 # Interpreter
 
-On-device document and text translation for macOS. Interpreter is an OMC/ActionUI shell applet that drives a bundled `mlx-agent` running a TranslateGemma (MLX) model - all translation happens locally, no network once a model is downloaded.
+On-device document and text translation for macOS. Interpreter is an OMC/ActionUI shell applet that drives bundled local inference engines - `mlx-agent` (MLX) for TranslateGemma and MiLMMT-46 models, and `llama.cpp` for GGUF models such as Hy-MT2 - behind a RAM-aware model chooser. All translation happens locally.
 
 Two modes:
 
 - Text window: type or paste text, pick From/To languages, translate.
 - Document window: pick/drop a document; Interpreter converts it to plain text, translates it, and writes a `<name>-translated.txt` next to the original.
 
+## On-device by design
+
+Everything the app does to your text and documents runs on this Mac:
+
+- Translation: the models are downloaded once (from Hugging Face, via the model chooser) and run locally on MLX or the bundled `llama.cpp`. No text ever leaves the machine.
+- Document conversion: `textutil` and the bundled `pdfutil` are local tools.
+- OCR of scanned PDFs: Apple's Vision framework, which recognizes text entirely on-device - verifiable by running the extraction under a network-denying sandbox (`sandbox-exec -p '(version 1)(allow default)(deny network*)' ...`), where it works unchanged.
+
+One disclaimer on OCR: Vision's per-language recognizer models are macOS assets. Common languages ship with the OS, but the first use of a less common recognition language on a fresh system may trigger a one-time asset download from Apple - a model coming down, never your document going up. Offline with missing assets, that page's hinted recognition fails and Interpreter retries the page with the recognizers already on the machine (auto-detect).
+
 ## Supported document types
 
-Document translation converts the input to plain UTF-8 text (see `convert_to_plain_text` in `Contents/Resources/Scripts/lib.interp.sh`) and translates that text. Most formats go through `textutil`; PDF goes through the bundled `pdftext` helper (PDFKit), because `textutil` cannot read PDF.
+Document translation converts the input to plain UTF-8 text (see `convert_to_plain_text` in `Contents/Resources/Scripts/lib.interp.sh`) and translates that text. Most formats go through `textutil`; PDF goes through the bundled `pdfutil` (PDFKit), because `textutil` cannot read PDF.
 
 | Format | Typical extensions | UTI | Via |
 | --- | --- | --- | --- |
 | Plain text | `.txt`, and other `public.text` (source code, `.csv`, `.xml`) | `public.text` | textutil |
-| PDF (text-based) | `.pdf` | `com.adobe.pdf` | pdftext (PDFKit) |
+| PDF | `.pdf` | `com.adobe.pdf` | pdfutil (PDFKit; Vision OCR for scanned pages) |
 | Rich Text | `.rtf` | `public.rtf` | textutil |
 | Rich Text with attachments | `.rtfd` | `com.apple.rtfd` | textutil |
 | HTML | `.html`, `.htm` | `public.html` | textutil |
@@ -33,10 +43,12 @@ Notes:
 
 ### PDF specifics and limitations
 
-PDF text is extracted with `Contents/Support/pdftext`, a small PDFKit tool built from `Tools/pdftext.swift` (see Building). It is fast (about 1M characters across 300+ pages in ~1.2s) and preserves Unicode; left-to-right scripts (Latin, CJK, Cyrillic, Greek, etc.) come out in correct reading order. Know the limits:
+PDF text is extracted page by page with the bundled `pdfutil` (github.com/abra-code/pdfutil): one `text` pass reads the text layer, and any page with no text is recognized individually with Vision OCR (`pdfutil ocr`), hinted with the selected From language. The pages are stitched back in document order, so:
 
-- Scanned / image-only PDFs have no text layer and yield nothing - Interpreter reports "Can't read this document". (A future Vision OCR fallback could handle these; not implemented.)
-- PDFs whose fonts lack a usable ToUnicode map (some tax/form PDFs, custom-encoded fonts) extract as placeholder-glyph garbage. `convert_to_plain_text` runs a garbage gate (`pdf_text_is_usable`) that rejects output dominated by a single character, so these also cleanly report "Can't read this document" rather than translating junk.
+- Scanned / image-only PDFs translate via OCR (on-device - see above). OCR is slower than text extraction (Vision rasterizes and reads each page); the status line counts pages and Stop cancels at any point, losing at most one page of work.
+- Mixed documents - digital text with scanned inserts (a signed page, a scanned appendix) - lose nothing: text pages are extracted verbatim, scanned pages are OCR'd.
+- A PDF whose entire text layer is unusable (fonts without a ToUnicode map extract as placeholder-glyph garbage; the `pdf_text_is_usable` gate catches this) is OCR'd wholesale instead of translating junk.
+- Not handled: text trapped inside images on pages that ALSO have a text layer. Such pages contribute their text layer only - region-aware merging would need support in `pdfutil` itself.
 - Right-to-left scripts (Arabic, Hebrew) are extracted in visual, not logical, order - translating from an RTL-language PDF may be garbled. This is a PDFKit limitation.
 - Line breaks fall at each visual line, not per paragraph, so paragraphs arrive hard-wrapped. Translatable as-is; a reflow pass is a possible future improvement.
 
@@ -50,20 +62,22 @@ User needs to export Pages document into one of the supported formats.
 The runtime binaries under `Contents/Support` are git-excluded build artifacts, assembled by `update_interpreter.sh`:
 
 - `mlx-agent` (+ its MLX resource bundles) - built from the separate `mlx-agent` repo via `xcodebuild` (Metal shaders), deployed to `Contents/Support/MLX/`.
-- `pdftext` - compiled from `Tools/pdftext.swift` with `swiftc` (system frameworks only, no Metal), deployed to `Contents/Support/pdftext`.
+- `pdfutil` - built from the separate `pdfutil` repo (github.com/abra-code/pdfutil, Apache 2.0) via its own `build.sh` (plain `swiftc`, system frameworks only), deployed to `Contents/Support/pdfutil` with its LICENSE beside it.
+- `llama.cpp` (optional, for GGUF models) - a pinned upstream release provisioned with `--with-llama`, deployed to `Contents/Support/Llama.cpp/`.
 
-Both are ad-hoc codesigned and the app is re-sealed by the script. Run `./update_interpreter.sh` (see `--help` for `--release`, `--arch`, `--skip-build`, `--identity`).
+The app is Apple Silicon only: the script thins every universal Mach-O in the bundle (the OMC executable and Abracode.framework arrive universal from the AppletBuilder template) to the target arch before ad-hoc codesigning and re-sealing the app. Run `./update_interpreter.sh` (see `--help` for `--release`, `--arch`, `--skip-build`, `--identity`, `--with-llama`).
 
 ## Layout
 
 - `Interpreter.app/Contents/Resources/Scripts/` - the OMC command handlers and shared libraries (`lib.interp.sh`, `lib.interp.models.sh`). POSIX `/bin/sh` (macOS bash 3.2); validate with `sh -n`.
 - `Interpreter.app/Contents/Resources/Command.json` - OMC command definitions (windows, dialogs, services).
-- `Interpreter.app/Contents/Support/MLX/mlx-agent` - the bundled translation engine (map broker + model loader).
-- `Interpreter.app/Contents/Support/pdftext` - the bundled PDF text-extraction helper.
-- `Tools/pdftext.swift` - source for the `pdftext` helper.
+- `Interpreter.app/Contents/Resources/models.catalog.tsv` - the model families and variants the RAM-aware chooser curates.
+- `Interpreter.app/Contents/Support/MLX/mlx-agent` - the bundled translation engine (map broker + model loader; also fronts llama-server for GGUF models).
+- `Interpreter.app/Contents/Support/Llama.cpp/` - the bundled llama.cpp engine (GGUF models).
+- `Interpreter.app/Contents/Support/pdfutil` - the bundled PDF toolbox (text extraction + OCR).
 - Application support at runtime: `~/Library/Application Support/Interpreter/` (`Models/`, `Sessions/`, `Cache/`, `Downloads/`).
 
 ## Requirements
 
-- macOS 14.6 or later.
-- A downloaded TranslateGemma model (the app offers a RAM-aware chooser on first run).
+- An Apple Silicon Mac (the app and its engines are arm64-only) running macOS 14.6 or later.
+- A downloaded translation model (the app offers a RAM-aware chooser on first run; models are curated per machine from the TranslateGemma, MiLMMT-46, and Hy-MT2 families).

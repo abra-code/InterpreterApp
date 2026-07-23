@@ -19,7 +19,7 @@ window_uuid="${OMC_ACTIONUI_WINDOW_UUID:-}"
 RESOURCES_DIR="$OMC_APP_BUNDLE_PATH/Contents/Resources"
 SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
 AGENT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent"
-PDFTEXT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/pdftext"
+PDFUTIL_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/pdfutil"
 # llama.cpp engine for GGUF models (provisioned by update_interpreter.sh --with-llama; dylibs
 # sit beside the binary). Absent in an MLX-only build - gguf models then fail to spawn cleanly.
 LLAMA_SERVER_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/Llama.cpp/llama-server"
@@ -482,10 +482,13 @@ pdf_text_is_usable() {   # $1 = extracted text file
 # Convert a document to plain UTF-8 text, writing it to $2. Returns 0 on a real conversion, non-zero
 # when the document could not be read.
 #
-# PDF is handled by the bundled PDFKit helper (pdftext), NOT textutil: textutil cannot parse PDF and
-# silently misreads the raw bytes as plain text, emitting binary garbage. A helper failure (cannot
-# open / locked / no text layer, i.e. a scanned image-only PDF) or output that does not survive the
-# garbage gate above is treated as a convert failure. Its output is already UTF-8.
+# PDF is handled by the bundled pdfutil, NOT textutil: textutil cannot parse PDF and silently
+# misreads the raw bytes as plain text, emitting binary garbage. With a spool ($3), PDFs go
+# through pdf_extract_text - the page-by-page ladder with per-page Vision OCR fallback for
+# scanned pages (cancellable, progress-reporting; see above), which needs the spool for its
+# cancel/pid files and optionally the From language ($4) as the OCR hint. Without a spool
+# (a context-free caller), PDFs get the plain `text` verb + garbage gate as before, no OCR.
+# pdfutil output is already UTF-8.
 #
 # Everything else goes through textutil. Plain-text inputs are deliberately NOT short-circuited
 # (copied) - they go through textutil too, because the translation pipeline needs UTF-8 and textutil
@@ -501,17 +504,139 @@ pdf_text_is_usable() {   # $1 = extracted text file
 # removed first so a missing file is detectable. A readable-but-empty document still succeeds here
 # (an empty output file); the caller's whitespace check reports that separately as "nothing to
 # translate".
-convert_to_plain_text() {   # $1 = input path, $2 = output file
+convert_to_plain_text() {   # $1 = input path, $2 = output file, $3 = spool (optional), $4 = From lang (optional)
     /bin/rm -f "$2"
 
     if is_pdf "$1"; then
-        "$PDFTEXT_BIN" "$1" > "$2" 2>/dev/null || { /bin/rm -f "$2"; return 1; }
+        local _rc
+        if [ -n "$3" ]; then
+            pdf_extract_text "$1" "$2" "$3" "$4"
+            _rc=$?
+            [ "$_rc" -ne 0 ] && /bin/rm -f "$2"
+            return "$_rc"
+        fi
+        "$PDFUTIL_BIN" text "$1" > "$2" 2>/dev/null || { /bin/rm -f "$2"; return 1; }
         pdf_text_is_usable "$2" || { /bin/rm -f "$2"; return 1; }
         return 0
     fi
 
     local _err=$(/usr/bin/textutil -convert txt -encoding UTF-8 -output "$2" "$1" 2>&1 >/dev/null)
     [ -z "$_err" ] && [ -f "$2" ]
+}
+
+# --- PDF page-by-page extraction with OCR fallback ---------------------------------------------
+#
+# Extraction ladder for a PDF (used by convert_to_plain_text when given a spool):
+#   1. ONE `pdfutil text --page-breaks` pass reads the whole text layer, form-feed separated.
+#   2. Pages with no text (image-only scans; also EVERY page when the whole layer fails the
+#      garbage gate, i.e. a junk text layer) are OCR'd INDIVIDUALLY via `pdfutil ocr -p k`
+#      (Vision rasterizes and reads just that page). Per-page granularity is what makes the
+#      slow path humane: the loop checks the spool's convert.cancel flag between pages (and
+#      interp.stop also TERMs the currently recorded child, ocr.pid, argv-verified), so a
+#      cancel loses at most one page of work; progress shows "page K of N".
+#   3. Pages are stitched back in document order - text-layer pages verbatim, OCR pages from
+#      Vision - so a mixed document (digital text with scanned inserts) loses nothing. That
+#      case previously passed the whole-document gate and silently dropped the scanned pages.
+#
+# OCR is hinted with the user's From language (a translation app KNOWS the source language);
+# if the hinted mode fails on a page (Vision has no recognizer for some tags), that page is
+# retried with auto-detect and the remaining pages use auto-detect directly.
+# Intra-page mixes (a text layer PLUS text trapped in images on the same page) stay the text
+# layer's alone - region-aware merging is a future pdfutil feature, not shell-composable.
+
+# OCR one page as a recorded, cancellable child. Honors the current $OCR_LANG_MODE (lang|auto)
+# and downgrades it to auto if the hinted attempt fails but auto succeeds.
+# Returns 0 = page text appended to $4, 1 = failed, 2 = cancelled.
+pdf_ocr_page() {   # $1 = spool, $2 = input pdf, $3 = page number, $4 = append-to file, $5 = lang
+    local _spool="$1" _pid _rc _try
+    for _try in current auto; do
+        if [ "$_try" = current ] && [ "$OCR_LANG_MODE" = lang ] && [ -n "$5" ]; then
+            "$PDFUTIL_BIN" ocr --lang "$5" -p "$3" "$2" >> "$4" 2>/dev/null &
+        elif [ "$_try" = auto ] && [ "$OCR_LANG_MODE" = lang ]; then
+            OCR_LANG_MODE=auto
+            "$PDFUTIL_BIN" ocr -p "$3" "$2" >> "$4" 2>/dev/null &
+        elif [ "$_try" = current ] && [ "$OCR_LANG_MODE" = auto ]; then
+            "$PDFUTIL_BIN" ocr -p "$3" "$2" >> "$4" 2>/dev/null &
+        else
+            break
+        fi
+        _pid=$!
+        /usr/bin/printf '%s' "$_pid" > "$_spool/ocr.pid"
+        wait "$_pid"
+        _rc=$?
+        /bin/rm -f "$_spool/ocr.pid"
+        [ -f "$_spool/convert.cancel" ] && return 2
+        [ "$_rc" -eq 0 ] && return 0
+    done
+    return 1
+}
+
+# The ladder described above. Returns 0 = text in $2, 1 = unreadable, 2 = cancelled.
+pdf_extract_text() {   # $1 = input pdf, $2 = output txt, $3 = spool, $4 = From lang code (BCP-47)
+    local _in="$1" _out="$2" _spool="$3" _lang="$4"
+    local _raw="$_spool/pdf.pages.raw" _total _k _ptxt _need _done _rc
+    OCR_LANG_MODE=lang
+
+    # A wholly text-less PDF makes `text` itself exit non-zero ("no extractable text") - that
+    # is the all-pages-scanned signal, not unreadability, so continue with an empty raw and
+    # let every page classify as OCR-needed. TRUE unreadability (corrupt, locked) is judged by
+    # `info`, which succeeds on any openable PDF regardless of its text layer.
+    "$PDFUTIL_BIN" text --page-breaks "$_in" > "$_raw" 2>/dev/null || : > "$_raw"
+    _total=$("$PDFUTIL_BIN" info "$_in" 2>/dev/null | /usr/bin/awk '/^pages:/ { print $2; exit }')
+    case "$_total" in ''|*[!0-9]*|0) /bin/rm -f "$_raw"; return 1 ;; esac
+
+    # Which pages carry text? A raw file the garbage gate rejects wholesale means the text
+    # layer itself is junk - treat every page as OCR-needed rather than stitching garbage.
+    local _empties=""
+    if /usr/bin/tr '\f' '\n' < "$_raw" > "$_out.probe" && pdf_text_is_usable "$_out.probe"; then
+        _k=1
+        while [ "$_k" -le "$_total" ]; do
+            _ptxt=$(/usr/bin/awk -v k="$_k" 'BEGIN{RS="\f"} NR==k' "$_raw")
+            case "$_ptxt" in *[![:space:]]*) ;; *) _empties="$_empties $_k" ;; esac
+            _k=$((_k + 1))
+        done
+    else
+        _k=1; while [ "$_k" -le "$_total" ]; do _empties="$_empties $_k"; _k=$((_k + 1)); done
+    fi
+    /bin/rm -f "$_out.probe"
+
+    # Fast path: every page has text - one tr, done.
+    if [ -z "$_empties" ]; then
+        /usr/bin/tr '\f' '\n' < "$_raw" > "$_out"
+        /bin/rm -f "$_raw"
+        return 0
+    fi
+
+    # Slow path: walk the pages in order, appending layer text or a per-page OCR result.
+    _need=$(set -- $_empties; echo $#)
+    _done=0
+    : > "$_out.tmp"
+    _k=1
+    while [ "$_k" -le "$_total" ]; do
+        if [ -f "$_spool/convert.cancel" ]; then
+            /bin/rm -f "$_raw" "$_out.tmp"
+            return 2
+        fi
+        case " $_empties " in
+            *" $_k "*)
+                _done=$((_done + 1))
+                set_status "Recognizing text — page $_done of $_need…"
+                pdf_ocr_page "$_spool" "$_in" "$_k" "$_out.tmp" "$_lang"
+                _rc=$?
+                if [ "$_rc" -ne 0 ]; then
+                    /bin/rm -f "$_raw" "$_out.tmp"
+                    return "$_rc"
+                fi
+                /usr/bin/printf '\n' >> "$_out.tmp" ;;
+            *)
+                /usr/bin/awk -v k="$_k" 'BEGIN{RS="\f"} NR==k' "$_raw" >> "$_out.tmp"
+                /usr/bin/printf '\n' >> "$_out.tmp" ;;
+        esac
+        _k=$((_k + 1))
+    done
+    /bin/rm -f "$_raw"
+    /bin/mv "$_out.tmp" "$_out"
+    return 0
 }
 
 # Default translated-output path for an input document: "<name-no-ext>-translated.txt" next to the

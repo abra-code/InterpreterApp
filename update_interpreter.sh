@@ -7,8 +7,9 @@
 # Steps: (1) build mlx-agent via xcodebuild (Metal shaders need the xcode build; there is no
 # longer a Package.swift to `swift build` at all, and the products land in the repo's
 # `build/` derived-data dir), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
-# bundles) to Contents/Support/MLX/, (3) ad-hoc codesign the copied binaries and the app,
-# (4) verify the deployed agent launches and is the new build (its usage lists `map`).
+# bundles) to Contents/Support/MLX/, build + embed pdfutil from its sibling repo, (3) ad-hoc
+# codesign the copied binaries and the app, (4) verify the deployed agent launches and is the
+# new build (its usage lists `map`) and pdfutil reports its version.
 #
 # The .app bundle is auto-detected from this script's directory.
 
@@ -60,7 +61,14 @@ for _c in "$SCRIPT_DIR"/*.app; do [ -d "$_c" ] && { APP_BUNDLE="$_c"; break; }; 
 [ -n "$APP_BUNDLE" ] || fail "No .app bundle found in $SCRIPT_DIR"
 MLX_DIR="$APP_BUNDLE/Contents/Support/MLX"
 SUPPORT_DIR="$APP_BUNDLE/Contents/Support"
-PDFTEXT_SRC="$SCRIPT_DIR/Tools/pdftext.swift"
+
+# Locate the pdfutil repo (PDF text extraction helper): env override, sibling dir, then
+# ~/Development/pdfutil. Built by its own build.sh (plain swiftc, system frameworks only).
+if [ -z "$PDFUTIL_REPO" ]; then
+    for _cand in "$SCRIPT_DIR/../pdfutil" "$HOME/Development/pdfutil"; do
+        [ -f "$_cand/build.sh" ] && [ -d "$_cand/Sources" ] && { PDFUTIL_REPO="$(cd "$_cand" && pwd)"; break; }
+    done
+fi
 
 # Locate the mlx-agent repo: env override, sibling dir, then ~/Development/mlx-agent.
 # Identified by the Xcode PROJECT, not Package.swift: mlx-agent dropped its package manifest
@@ -108,18 +116,21 @@ done
 [ -f "$MLX_DIR/$required_bundle/Contents/Resources/default.metallib" ] || fail "default.metallib not found after copy."
 echo "  ${GREEN}Deployed${RESET} mlx-agent + metallib"
 
-# ── 2b. Build the pdftext helper ──────────────────────────────────────────
-# Small single-file Swift tool (system frameworks only: PDFKit + Foundation) used by
-# convert_to_plain_text for PDF inputs, which textutil cannot read. Compiled straight into
-# Contents/Support/pdftext. No Metal, so a plain swiftc compile is enough (no xcodebuild).
+# ── 2b. Build + embed the pdfutil helper ──────────────────────────────────
+# pdfutil (github.com/abra-code/pdfutil, Apache 2.0) replaces the old in-repo pdftext.swift:
+# its `text` verb does the PDF text extraction convert_to_plain_text needs (textutil cannot
+# read PDF). Built by the repo's own build.sh (plain swiftc, system frameworks only) for this
+# script's target arch, then copied to Contents/Support/pdfutil with its LICENSE beside it.
 if [ "$DO_BUILD" = "yes" ]; then
-    [ -f "$PDFTEXT_SRC" ] || fail "pdftext source not found: $PDFTEXT_SRC"
-    /usr/bin/xcrun swiftc -O -target "${ARCH}-apple-macos14.6" -o "$SUPPORT_DIR/pdftext" "$PDFTEXT_SRC" \
-        || fail "swiftc failed to build pdftext"
-    /bin/chmod +x "$SUPPORT_DIR/pdftext"
-    echo "  ${GREEN}Built${RESET} pdftext"
+    [ -n "$PDFUTIL_REPO" ] || fail "pdfutil repo not found (looked for build.sh + Sources); clone github.com/abra-code/pdfutil beside this repo or set PDFUTIL_REPO"
+    ( cd "$PDFUTIL_REPO" && ./build.sh "$ARCH" ) || fail "pdfutil build.sh failed"
+    /bin/cp -f "$PDFUTIL_REPO/build/pdfutil" "$SUPPORT_DIR/pdfutil" || fail "Could not copy pdfutil"
+    /bin/chmod +x "$SUPPORT_DIR/pdfutil"
+    [ -f "$PDFUTIL_REPO/LICENSE" ] && /bin/cp -f "$PDFUTIL_REPO/LICENSE" "$SUPPORT_DIR/pdfutil.LICENSE"
+    /bin/rm -f "$SUPPORT_DIR/pdftext"   # retire the old helper on upgrade
+    echo "  ${GREEN}Built${RESET} pdfutil ($ARCH)"
 fi
-[ -x "$SUPPORT_DIR/pdftext" ] || fail "No pdftext at $SUPPORT_DIR/pdftext (build first, or drop --skip-build)."
+[ -x "$SUPPORT_DIR/pdfutil" ] || fail "No pdfutil at $SUPPORT_DIR/pdfutil (build first, or drop --skip-build)."
 
 # ── 2c. llama.cpp engine (gguf models, opt-in) ────────────────────────────
 # Prebuilt upstream release tarball -> Contents/Support/Llama.cpp/ (llama-server + dylibs,
@@ -148,13 +159,46 @@ if [ "$DO_LLAMA" = "yes" ]; then
     echo "  ${GREEN}Deployed${RESET} llama.cpp $LLAMA_VERSION -> Contents/Support/Llama.cpp"
 fi
 
+# ── 2d. Sweep build/runtime droppings out of Support ──────────────────────
+# LLVM coverage-instrumented binaries dump default.profraw into their CWD at exit - and the
+# verify step below runs mlx-agent with CWD inside the bundle, which once shipped a stale
+# profraw. Sweep profiling artifacts (and Finder droppings) before signing, and warn if a
+# deployed binary is itself instrumented: instrumentation has no place in a shipping build.
+/usr/bin/find "$SUPPORT_DIR" \( -name "*.profraw" -o -name "*.profdata" -o -name ".DS_Store" \) -delete
+for _bin in "$MLX_DIR/mlx-agent" "$LLAMA_DIR/llama-server" "$SUPPORT_DIR/pdfutil"; do
+    [ -f "$_bin" ] || continue
+    if /usr/bin/otool -l "$_bin" 2>/dev/null | /usr/bin/grep -q "__llvm_prf"; then
+        echo "${YELLOW}  WARNING: $(basename "$_bin") is coverage-instrumented (__llvm_prf) - rebuild without profiling for release${RESET}"
+    fi
+done
+
+# ── 2e. Thin every Mach-O to $ARCH ────────────────────────────────────────
+# Interpreter.app ships Apple-Silicon-only. The OMC executable and Abracode.framework pieces
+# arrive UNIVERSAL from the AppletBuilder template, so any fat binary anywhere in the bundle
+# is thinned to $ARCH here, before signing. In-place replacement via cat keeps the file's
+# inode and permissions; already-thin files are untouched, so re-runs are no-ops, and a
+# framework refresh that reintroduces fat binaries is caught on the next update.
+/usr/bin/find "$APP_BUNDLE" -type f | while IFS= read -r _mf; do
+    _archs=$(/usr/bin/lipo -archs "$_mf" 2>/dev/null) || continue
+    case "$_archs" in *" "*) ;; *) continue ;; esac
+    case " $_archs " in
+        *" $ARCH "*) ;;
+        *) echo "${YELLOW}  cannot thin (no $ARCH slice): ${_mf#$APP_BUNDLE/}${RESET}"; continue ;;
+    esac
+    _tmp="${TMPDIR:-/tmp}/thin.$$.$(/usr/bin/basename "$_mf")"
+    if /usr/bin/lipo -thin "$ARCH" "$_mf" -output "$_tmp" 2>/dev/null; then
+        /bin/cat "$_tmp" > "$_mf" && echo "  thinned ${_mf#$APP_BUNDLE/} -> $ARCH"
+    fi
+    /bin/rm -f "$_tmp"
+done
+
 # ── 3. Codesign ───────────────────────────────────────────────────────────
 if [ "$DO_CODESIGN" = "yes" ]; then
     for target in \
         "$MLX_DIR/mlx-swift_Cmlx.bundle" "$MLX_DIR/swift-crypto_Crypto.bundle" \
         "$MLX_DIR/swift-transformers_Hub.bundle" "$MLX_DIR/mlx-agent" \
         "$LLAMA_DIR"/*.dylib "$LLAMA_DIR/llama-server" \
-        "$SUPPORT_DIR/pdftext"; do
+        "$SUPPORT_DIR/pdfutil"; do
         [ -e "$target" ] || continue
         /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$target" >/dev/null 2>&1 \
             && echo "  signed $(basename "$target")" || echo "${RED}  FAILED $(basename "$target")${RESET}"
@@ -165,18 +209,20 @@ if [ "$DO_CODESIGN" = "yes" ]; then
 fi
 
 # ── 4. Verify ─────────────────────────────────────────────────────────────
-if ( cd "$MLX_DIR" && ./mlx-agent 2>&1 ) | /usr/bin/grep -q -- "map "; then
+# LLVM_PROFILE_FILE=/dev/null: even if a future build slips through instrumented, its exit
+# dump goes nowhere instead of into the bundle we just signed.
+if ( cd "$MLX_DIR" && LLVM_PROFILE_FILE=/dev/null ./mlx-agent 2>&1 ) | /usr/bin/grep -q -- "map "; then
     echo "  ${GREEN}Verify OK${RESET}: mlx-agent launches and lists the 'map' mode"
 else
     fail "mlx-agent did not report 'map' mode - stale binary or a dylib load failure."
 fi
 
-# pdftext with no args prints usage and exits 2; that proves the binary loads (PDFKit linked).
-"$SUPPORT_DIR/pdftext" >/dev/null 2>&1; pt_rc=$?
-if [ "$pt_rc" = 2 ]; then
-    echo "  ${GREEN}Verify OK${RESET}: pdftext launches"
+# pdfutil --version prints "pdfutil <ver>" and exits 0; that proves the binary loads (PDFKit
+# linked). Bare pdfutil also exits 0 (usage), so match the output, not just the exit code.
+if "$SUPPORT_DIR/pdfutil" --version 2>/dev/null | /usr/bin/grep -q "^pdfutil "; then
+    echo "  ${GREEN}Verify OK${RESET}: pdfutil launches"
 else
-    fail "pdftext did not launch (exit $pt_rc) - build/link failure."
+    fail "pdfutil did not report its version - build/link failure."
 fi
 
 echo
