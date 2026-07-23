@@ -7,8 +7,8 @@
 # Steps: (1) build mlx-agent via xcodebuild (Metal shaders need the xcode build; there is no
 # longer a Package.swift to `swift build` at all, and the products land in the repo's
 # `build/` derived-data dir), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
-# bundles) to Contents/Support/MLX/, build + embed pdfutil from its sibling repo, (3) ad-hoc
-# codesign the copied binaries and the app, (4) verify the deployed agent launches and is the
+# bundles) to Contents/Support/MLX/, build + embed pdfutil from its sibling repo, (3) deep-sign
+# the whole bundle via codesign_applet.sh, (4) verify the deployed agent launches and is the
 # new build (its usage lists `map`) and pdfutil reports its version.
 #
 # The .app bundle is auto-detected from this script's directory.
@@ -220,19 +220,17 @@ done
 done
 
 # ── 3. Codesign ───────────────────────────────────────────────────────────
+# Deep-sign with codesign_applet.sh (shipped beside this script): it signs every
+# loose Mach-O and nested code bundle deepest-first - the added Support/ engines
+# included - then the app itself, replacing the deprecated `codesign --deep`, and
+# verifies the result. --brief keeps its output to per-bundle summary lines.
 if [ "$DO_CODESIGN" = "yes" ]; then
-    for target in \
-        "$MLX_DIR/mlx-swift_Cmlx.bundle" "$MLX_DIR/swift-crypto_Crypto.bundle" \
-        "$MLX_DIR/swift-transformers_Hub.bundle" "$MLX_DIR/mlx-agent" \
-        "$LLAMA_DIR"/*.dylib "$LLAMA_DIR/llama-server" \
-        "$SUPPORT_DIR/pdfutil"; do
-        [ -e "$target" ] || continue
-        /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$target" >/dev/null 2>&1 \
-            && echo "  signed $(basename "$target")" || echo "${RED}  FAILED $(basename "$target")${RESET}"
-    done
-    # Re-seal the whole app (deep) so the added Support pieces are covered.
-    /usr/bin/codesign --force --deep --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_BUNDLE" >/dev/null 2>&1 \
-        && echo "  signed $(basename "$APP_BUNDLE")" || echo "${YELLOW}  app re-sign returned nonzero${RESET}"
+    if [ -x "$SCRIPT_DIR/codesign_applet.sh" ]; then
+        "$SCRIPT_DIR/codesign_applet.sh" --brief "$APP_BUNDLE" "$SIGNING_IDENTITY" \
+            || echo "${YELLOW}  codesign_applet.sh returned nonzero${RESET}"
+    else
+        echo "${YELLOW}  codesign_applet.sh not found beside this script - skipping codesign${RESET}"
+    fi
 fi
 
 # ── 4. Verify ─────────────────────────────────────────────────────────────
