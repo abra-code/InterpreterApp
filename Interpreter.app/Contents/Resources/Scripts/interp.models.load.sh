@@ -100,30 +100,47 @@ insert_cards() {   # $1 = curated file
 
         # For a row with an active download, leave the size text AND the button to the download
         # poller (its sig was just cleared, so it re-pushes within a tick); otherwise show the
-        # static size line and enable/disable by installed state. The interpolated card fields
-        # (label, desc, badge, size_text) are catalog/self-generated and MUST stay free of
-        # double quotes and backslashes - models.catalog.tsv authors, keep it that way.
+        # static size line and enable/disable by installed state. An INSTALLED row hides the
+        # Download button entirely and shows the reveal/delete icon pair in its place (the two
+        # occupy the same ZStack slot; the poller keeps the visibilities in sync afterwards).
+        # The interpolated card fields (label, desc, badge, size_text) are catalog/self-generated
+        # and MUST stay free of double quotes and backslashes - models.catalog.tsv authors, keep
+        # it that way.
         size_text="$label - $(bytes_to_gb "$size")"
         disabled=false
+        dl_hidden=false; icons_hidden=true
         wstate=$(/bin/cat "$DOWNLOADS_DIR/$repo/state" 2>/dev/null)
         case "$wstate" in
             preparing|downloading|installing) size_text=""; disabled=true ;;
-            *) [ "$installed" = 1 ] && disabled=true ;;
+            *) [ "$installed" = 1 ] && { dl_hidden=true; icons_hidden=false; } ;;
         esac
 
-        card=$(/usr/bin/printf '%s' \
-"{\"type\":\"GroupBox\",\"id\":$base,\"properties\":{\"frame\":{\"maxWidth\":\"infinity\"}},\"children\":[\
-{\"type\":\"VStack\",\"properties\":{\"alignment\":\"leading\",\"spacing\":6,\"frame\":{\"maxWidth\":\"infinity\"}},\"children\":[\
-{\"type\":\"HStack\",\"properties\":{\"spacing\":8},\"children\":[\
-{\"type\":\"Text\",\"id\":$((base + 1)),\"properties\":{\"text\":\"$label\",\"font\":\"headline\"}},\
-{\"type\":\"Spacer\"},\
-{\"type\":\"Text\",\"id\":$((base + 2)),\"properties\":{\"text\":\"$badge\",\"font\":\"caption\"}},\
-{\"type\":\"Button\",\"id\":$((base + 6)),\"properties\":{\"systemImage\":\"info.circle\",\"buttonStyle\":\"borderless\",\"help\":\"Model details, source, and license\",\"actionID\":\"interp.models.info\"}}]},\
-{\"type\":\"Text\",\"id\":$((base + 3)),\"properties\":{\"text\":\"$desc\",\"font\":\"caption\",\"foregroundStyle\":\"secondary\"}},\
-{\"type\":\"HStack\",\"properties\":{\"spacing\":8},\"children\":[\
-{\"type\":\"Text\",\"id\":$((base + 4)),\"properties\":{\"text\":\"$size_text\",\"font\":\"caption\",\"foregroundStyle\":\"secondary\"}},\
-{\"type\":\"Spacer\"},\
-{\"type\":\"Button\",\"id\":$((base + 5)),\"properties\":{\"title\":\"Download\",\"buttonStyle\":\"borderedProminent\",\"actionID\":\"interp.model.download\",\"disabled\":$disabled}}]}]}]}")
+        # Render the card from the TEMPLATE (Resources/model.card.template.json - readable,
+        # diffable JSON) by substituting the per-row ids and text fields. The template cannot
+        # be a static ActionUI resource because every row needs its own view ids (the pollers
+        # and button handlers reverse-map a clicked id to its curated row via the base+N
+        # scheme). Substituted TEXT values are catalog/self-generated and MUST stay free of
+        # double quotes, backslashes, pipes, and ampersands: the first two would break the
+        # JSON string, the last two the sed replacement below.
+        card=$(/usr/bin/sed \
+            -e "s|__ID_CARD__|$base|" \
+            -e "s|__ID_TITLE__|$((base + 1))|" \
+            -e "s|__ID_BADGE__|$((base + 2))|" \
+            -e "s|__ID_DESC__|$((base + 3))|" \
+            -e "s|__ID_SIZE__|$((base + 4))|" \
+            -e "s|__ID_DL__|$((base + 5))|" \
+            -e "s|__ID_INFO__|$((base + 6))|" \
+            -e "s|__ID_ICONS__|$((base + 7))|" \
+            -e "s|__ID_REVEAL__|$((base + 8))|" \
+            -e "s|__ID_DELETE__|$((base + 9))|" \
+            -e "s|__LABEL__|$label|" \
+            -e "s|__BADGE__|$badge|" \
+            -e "s|__DESC__|$desc|" \
+            -e "s|__SIZE_TEXT__|$size_text|" \
+            -e "s|__DL_DISABLED__|$disabled|" \
+            -e "s|__DL_HIDDEN__|$dl_hidden|" \
+            -e "s|__ICONS_HIDDEN__|$icons_hidden|" \
+            "$RESOURCES_DIR/model.card.template.json")
 
         "$dialog" "$window_uuid" "$container" omc_insert_element "$card"
         /usr/bin/printf '%s\n' "$base" >> "$marker/cards"

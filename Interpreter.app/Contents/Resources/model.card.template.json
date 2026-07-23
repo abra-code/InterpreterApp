@@ -1,0 +1,47 @@
+{
+  "type": "GroupBox",
+  "id": __ID_CARD__,
+  "properties": { "frame": { "maxWidth": "infinity" } },
+  "children": [
+    {
+      "type": "VStack",
+      "properties": { "alignment": "leading", "spacing": 6, "frame": { "maxWidth": "infinity" } },
+      "children": [
+        {
+          "type": "HStack",
+          "properties": { "spacing": 8 },
+          "children": [
+            { "type": "Text", "id": __ID_TITLE__, "properties": { "text": "__LABEL__", "font": "headline" } },
+            { "type": "Spacer" },
+            { "type": "Text", "id": __ID_BADGE__, "properties": { "text": "__BADGE__", "font": "caption" } },
+            { "type": "Button", "id": __ID_INFO__, "properties": { "systemImage": "info.circle", "buttonStyle": "borderless", "help": "Model details, source, and license", "actionID": "interp.models.info" } }
+          ]
+        },
+        { "type": "Text", "id": __ID_DESC__, "properties": { "text": "__DESC__", "font": "caption", "foregroundStyle": "secondary" } },
+        {
+          "type": "HStack",
+          "properties": { "spacing": 8 },
+          "children": [
+            { "type": "Text", "id": __ID_SIZE__, "properties": { "text": "__SIZE_TEXT__", "font": "caption", "foregroundStyle": "secondary" } },
+            { "type": "Spacer" },
+            {
+              "type": "ZStack",
+              "children": [
+                { "type": "Button", "id": __ID_DL__, "properties": { "title": "Download", "buttonStyle": "borderedProminent", "actionID": "interp.model.download", "disabled": __DL_DISABLED__, "hidden": __DL_HIDDEN__ } },
+                {
+                  "type": "HStack",
+                  "id": __ID_ICONS__,
+                  "properties": { "spacing": 14, "hidden": __ICONS_HIDDEN__ },
+                  "children": [
+                    { "type": "Button", "id": __ID_REVEAL__, "properties": { "systemImage": "folder", "buttonStyle": "borderless", "help": "Show the installed model in Finder", "actionID": "interp.models.reveal" } },
+                    { "type": "Button", "id": __ID_DELETE__, "properties": { "systemImage": "trash", "buttonStyle": "borderless", "role": "destructive", "help": "Delete this model from disk", "actionID": "interp.models.delete" } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

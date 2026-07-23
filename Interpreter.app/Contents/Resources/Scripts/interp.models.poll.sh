@@ -48,7 +48,7 @@ reflect_row() {   # $1=row $2=repo $3=catalog_size
                 if download_worker_alive "$_work"; then _text="Finishing…"; _btnstate=off
                 else _text="Download interrupted - click Download to resume."; _btnstate=on; fi ;;
             error)      _text=$(/bin/cat "$_work/message" 2>/dev/null); _btnstate=on ;;
-            done)       _text="Installed - $(bytes_to_gb "$_total")"; _btnstate=off ;;
+            done)       _text="Installed - $(bytes_to_gb "$_total")"; _btnstate=installed ;;
             downloading)
                 if download_worker_alive "$_work"; then
                     _got=$(/usr/bin/du -sk "$_work/staging" 2>/dev/null | /usr/bin/awk '{ print $1 * 1024; exit }')
@@ -70,18 +70,29 @@ reflect_row() {   # $1=row $2=repo $3=catalog_size
         /usr/bin/printf '%s' "$_sig" > "$_sigf"
         "$dialog" "$window_uuid" "$_sz" "$_text"
         if [ "$_state" = done ]; then "$dialog" "$window_uuid" "$_badge" "Installed"; fi
-        if [ "$_btnstate" = off ]; then "$dialog" "$window_uuid" "$_btn" omc_disable
-        else "$dialog" "$window_uuid" "$_btn" omc_enable; fi
+        # Button area (a ZStack): active/failed downloads show the Download button (disabled or
+        # enabled); an installed row swaps it for the reveal/delete icon pair.
+        case "$_btnstate" in
+            installed) "$dialog" "$window_uuid" "$_btn" omc_hide
+                       "$dialog" "$window_uuid" $((_base + 7)) omc_show ;;
+            on)        "$dialog" "$window_uuid" $((_base + 7)) omc_hide
+                       "$dialog" "$window_uuid" "$_btn" omc_show
+                       "$dialog" "$window_uuid" "$_btn" omc_enable ;;
+            off)       "$dialog" "$window_uuid" $((_base + 7)) omc_hide
+                       "$dialog" "$window_uuid" "$_btn" omc_show
+                       "$dialog" "$window_uuid" "$_btn" omc_disable ;;
+        esac
         # A finished download's work dir is no longer needed; the installed model speaks for itself.
         [ "$_state" = done ] && /bin/rm -rf "$_work"
     elif model_installed_at "$MODELS_DIR/$_repo"; then
-        # Installed with no active download: make sure the badge/button reflect that (load also
+        # Installed with no active download: make sure the badge/buttons reflect that (load also
         # does this, but a just-completed download that cleaned its work dir passes through here).
         _sig="installed"
         [ "$_sig" = "$(/bin/cat "$_sigf" 2>/dev/null)" ] && return 0
         /usr/bin/printf '%s' "$_sig" > "$_sigf"
         "$dialog" "$window_uuid" "$_badge" "Installed"
-        "$dialog" "$window_uuid" "$_btn" omc_disable
+        "$dialog" "$window_uuid" "$_btn" omc_hide
+        "$dialog" "$window_uuid" $((_base + 7)) omc_show
     else
         /bin/rm -f "$_sigf"   # nothing active: let load's static content stand
     fi
