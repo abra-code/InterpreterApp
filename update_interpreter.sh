@@ -30,6 +30,7 @@ LLAMA_VERSION="b10056"
 
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" >/dev/null 2>&1 && pwd)"
 AGENT_REPO="${MLX_AGENT_REPO:-}"
+PDFUTIL_REPO="${PDFUTIL_REPO:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -52,6 +53,18 @@ done
 
 fail() { echo "${RED}$*${RESET}" >&2; exit 1; }
 
+# A dependency repo is missing: offer to git-clone it into the sibling location and continue.
+# Interactive runs only - without a TTY (CI, piped stdin) this declines silently and the
+# caller's fail() fires with the manual instructions. $1 = repo URL, $2 = destination dir.
+offer_clone() {
+    [ -t 0 ] || return 1
+    printf "%s  %s not found. Clone %s\n  into %s now? [y/N] %s" \
+        "$YELLOW" "$(/usr/bin/basename "$2")" "$1" "$2" "$RESET"
+    IFS= read -r _ans
+    case "$_ans" in [yY]|[yY][eE][sS]) ;; *) return 1 ;; esac
+    /usr/bin/git clone "$1" "$2"
+}
+
 [ "$ARCH" = "auto" ] && ARCH="$(/usr/bin/uname -m)"
 case "$ARCH" in arm64|x86_64) ;; *) fail "Invalid --arch: $ARCH" ;; esac
 
@@ -62,16 +75,23 @@ for _c in "$SCRIPT_DIR"/*.app; do [ -d "$_c" ] && { APP_BUNDLE="$_c"; break; }; 
 MLX_DIR="$APP_BUNDLE/Contents/Support/MLX"
 SUPPORT_DIR="$APP_BUNDLE/Contents/Support"
 
-# Locate the pdfutil repo (PDF text extraction helper): env override, then sibling dir.
-# Built by its own build.sh (plain swiftc, system frameworks only).
+# Locate the pdfutil repo (PDF text extraction helper): env override, then sibling dir,
+# offering to clone it there when missing (only when a build is requested - --skip-build
+# reuses the already-deployed binary). Built by its own build.sh (plain swiftc, system
+# frameworks only).
 if [ -z "$PDFUTIL_REPO" ]; then
     for _cand in "$SCRIPT_DIR/../pdfutil"; do
         [ -f "$_cand/build.sh" ] && [ -d "$_cand/Sources" ] && { PDFUTIL_REPO="$(cd "$_cand" && pwd)"; break; }
     done
 fi
+if [ -z "$PDFUTIL_REPO" ] && [ "$DO_BUILD" = "yes" ]; then
+    offer_clone "https://github.com/abra-code/pdfutil" "$(cd "$SCRIPT_DIR/.." && pwd)/pdfutil" \
+        && [ -f "$SCRIPT_DIR/../pdfutil/build.sh" ] \
+        && PDFUTIL_REPO="$(cd "$SCRIPT_DIR/../pdfutil" && pwd)"
+fi
 
 # Locate the mlx-agent repo (github.com/abra-code/mlx-agent, Apache 2.0): env override,
-# then sibling dir.
+# then sibling dir, offering to clone it there when missing.
 # Identified by the Xcode PROJECT, not Package.swift: mlx-agent dropped its package manifest
 # when it moved to an XcodeGen-generated project (the Metal shaders forced xcodebuild, and
 # two manifests meant two dependency graphs that could drift). The .xcodeproj is committed.
@@ -79,6 +99,11 @@ if [ -z "$AGENT_REPO" ]; then
     for _cand in "$SCRIPT_DIR/../mlx-agent"; do
         [ -d "$_cand/mlx-agent.xcodeproj" ] && { AGENT_REPO="$(cd "$_cand" && pwd)"; break; }
     done
+fi
+if [ -z "$AGENT_REPO" ]; then
+    offer_clone "https://github.com/abra-code/mlx-agent" "$(cd "$SCRIPT_DIR/.." && pwd)/mlx-agent" \
+        && [ -d "$SCRIPT_DIR/../mlx-agent/mlx-agent.xcodeproj" ] \
+        && AGENT_REPO="$(cd "$SCRIPT_DIR/../mlx-agent" && pwd)"
 fi
 [ -n "$AGENT_REPO" ] && [ -d "$AGENT_REPO/mlx-agent.xcodeproj" ] || fail "mlx-agent repo not found (looked for mlx-agent.xcodeproj); clone github.com/abra-code/mlx-agent beside this repo or pass --agent-repo=PATH"
 AGENT_BUILD_DIR="$AGENT_REPO/build/Build/Products/$CONFIG"
