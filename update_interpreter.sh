@@ -62,24 +62,25 @@ for _c in "$SCRIPT_DIR"/*.app; do [ -d "$_c" ] && { APP_BUNDLE="$_c"; break; }; 
 MLX_DIR="$APP_BUNDLE/Contents/Support/MLX"
 SUPPORT_DIR="$APP_BUNDLE/Contents/Support"
 
-# Locate the pdfutil repo (PDF text extraction helper): env override, sibling dir, then
-# ~/Development/pdfutil. Built by its own build.sh (plain swiftc, system frameworks only).
+# Locate the pdfutil repo (PDF text extraction helper): env override, then sibling dir.
+# Built by its own build.sh (plain swiftc, system frameworks only).
 if [ -z "$PDFUTIL_REPO" ]; then
-    for _cand in "$SCRIPT_DIR/../pdfutil" "$HOME/Development/pdfutil"; do
+    for _cand in "$SCRIPT_DIR/../pdfutil"; do
         [ -f "$_cand/build.sh" ] && [ -d "$_cand/Sources" ] && { PDFUTIL_REPO="$(cd "$_cand" && pwd)"; break; }
     done
 fi
 
-# Locate the mlx-agent repo: env override, sibling dir, then ~/Development/mlx-agent.
+# Locate the mlx-agent repo (github.com/abra-code/mlx-agent, Apache 2.0): env override,
+# then sibling dir.
 # Identified by the Xcode PROJECT, not Package.swift: mlx-agent dropped its package manifest
 # when it moved to an XcodeGen-generated project (the Metal shaders forced xcodebuild, and
 # two manifests meant two dependency graphs that could drift). The .xcodeproj is committed.
 if [ -z "$AGENT_REPO" ]; then
-    for _cand in "$SCRIPT_DIR/../mlx-agent" "$HOME/Development/mlx-agent"; do
+    for _cand in "$SCRIPT_DIR/../mlx-agent"; do
         [ -d "$_cand/mlx-agent.xcodeproj" ] && { AGENT_REPO="$(cd "$_cand" && pwd)"; break; }
     done
 fi
-[ -n "$AGENT_REPO" ] && [ -d "$AGENT_REPO/mlx-agent.xcodeproj" ] || fail "mlx-agent repo not found (looked for mlx-agent.xcodeproj); pass --agent-repo=PATH"
+[ -n "$AGENT_REPO" ] && [ -d "$AGENT_REPO/mlx-agent.xcodeproj" ] || fail "mlx-agent repo not found (looked for mlx-agent.xcodeproj); clone github.com/abra-code/mlx-agent beside this repo or pass --agent-repo=PATH"
 AGENT_BUILD_DIR="$AGENT_REPO/build/Build/Products/$CONFIG"
 
 echo
@@ -114,6 +115,7 @@ for b in "$required_bundle" swift-crypto_Crypto.bundle swift-transformers_Hub.bu
     fi
 done
 [ -f "$MLX_DIR/$required_bundle/Contents/Resources/default.metallib" ] || fail "default.metallib not found after copy."
+[ -f "$AGENT_REPO/LICENSE" ] && /bin/cp -f "$AGENT_REPO/LICENSE" "$MLX_DIR/mlx-agent.LICENSE"
 echo "  ${GREEN}Deployed${RESET} mlx-agent + metallib"
 
 # ── 2b. Build + embed the pdfutil helper ──────────────────────────────────

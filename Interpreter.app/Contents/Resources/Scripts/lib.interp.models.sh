@@ -29,7 +29,7 @@ family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; mil
 
 # One-sentence model-specific guidance for a family, shown on every curated card (prepended to
 # the section rationale) and in the info sheet, so a user can pick BETWEEN families, not just
-# between sizes. Grounded in the 34-translation batteries (see Private/models-matrix.md): keep
+# between sizes. Grounded in 34-translation quality batteries run across the families: keep
 # these claims in sync with what testing actually showed. Card fields must stay free of double
 # quotes and backslashes (they are interpolated into JSON - see insert_cards).
 family_blurb() {   # $1 = family

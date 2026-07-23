@@ -1,6 +1,6 @@
 # Interpreter
 
-On-device document and text translation for macOS. Interpreter is an OMC/ActionUI shell applet that drives bundled local inference engines - `mlx-agent` (MLX) for TranslateGemma and MiLMMT-46 models, and `llama.cpp` for GGUF models such as Hy-MT2 - behind a RAM-aware model chooser. All translation happens locally.
+On-device document and text translation for macOS. Interpreter is an OMC/ActionUI shell applet that drives bundled local inference engines - [`mlx-agent`](https://github.com/abra-code/mlx-agent) (MLX) for TranslateGemma and MiLMMT-46 models, and `llama.cpp` for GGUF models such as Hy-MT2 - behind a RAM-aware model chooser. All translation happens locally.
 
 Two modes:
 
@@ -61,7 +61,7 @@ User needs to export Pages document into one of the supported formats.
 
 The runtime binaries under `Contents/Support` are git-excluded build artifacts, assembled by `update_interpreter.sh`:
 
-- `mlx-agent` (+ its MLX resource bundles) - built from the separate `mlx-agent` repo via `xcodebuild` (Metal shaders), deployed to `Contents/Support/MLX/`.
+- `mlx-agent` (+ its MLX resource bundles) - built from the separate `mlx-agent` repo (github.com/abra-code/mlx-agent, Apache 2.0) via `xcodebuild` (Metal shaders), deployed to `Contents/Support/MLX/` with its LICENSE beside it.
 - `pdfutil` - built from the separate `pdfutil` repo (github.com/abra-code/pdfutil, Apache 2.0) via its own `build.sh` (plain `swiftc`, system frameworks only), deployed to `Contents/Support/pdfutil` with its LICENSE beside it.
 - `llama.cpp` (optional, for GGUF models) - a pinned upstream release provisioned with `--with-llama`, deployed to `Contents/Support/Llama.cpp/`.
 
