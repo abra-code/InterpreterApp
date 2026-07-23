@@ -20,7 +20,7 @@
       "children": [
         {
           "type": "VStack",
-          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 2, "trailing": 6 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 2, "trailing": 6 }, "frame": { "minWidth": 320, "maxWidth": "infinity", "maxHeight": "infinity" } },
           "children": [
             {
               "type": "HStack",
@@ -56,7 +56,7 @@
         },
         {
           "type": "VStack",
-          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 6, "trailing": 2 }, "frame": { "minWidth": 320, "idealWidth": 460, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "properties": { "spacing": 6, "padding": { "top": 2, "bottom": 2, "leading": 6, "trailing": 2 }, "frame": { "minWidth": 320, "maxWidth": "infinity", "maxHeight": "infinity" } },
           "children": [
             {
               "type": "HStack",

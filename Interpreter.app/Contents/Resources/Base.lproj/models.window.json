@@ -41,7 +41,7 @@
             "properties": { "hidden": true, "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } },
             "children": [
               { "type": "Text", "id": 1101, "properties": { "text": "Best Quality", "font": "headline", "foregroundStyle": "secondary" } },
-              { "type": "Text", "id": 1103, "properties": { "text": "Highest quality, but slower and more memory-demanding. A model marked Heavy uses most of this Mac's memory, so other apps may slow down while it runs.", "font": "caption", "foregroundStyle": "secondary" } },
+              { "type": "Text", "id": 1103, "properties": { "text": "Highest quality, but slower and more memory-demanding. A heavy model uses most of this Mac's memory, so other apps may slow down while it runs.", "font": "caption", "foregroundStyle": "secondary" } },
               { "type": "VStack", "id": 1102, "properties": { "spacing": 8, "alignment": "leading", "frame": { "maxWidth": "infinity" } }, "children": [] }
             ]
           },
