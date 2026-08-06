@@ -55,12 +55,14 @@ render_sig() {   # $1 = curated file
 # Remove the tracked card set and their poller dedup sigs, and hide the section boxes.
 remove_cards() {
     if [ -f "$marker/cards" ]; then
+        local old_id
         while IFS= read -r old_id; do
             case "$old_id" in ''|*[!0-9]*) continue ;; esac
             "$dialog" "$window_uuid" "$old_id" omc_remove_element
         done < "$marker/cards"
     fi
     /bin/rm -f "$marker/cards" "$marker"/row.*.sig
+    local sec_box
     for sec_box in 1100 1200 1300; do
         "$dialog" "$window_uuid" "$sec_box" omc_hide
     done

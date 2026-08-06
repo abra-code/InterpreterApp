@@ -60,6 +60,7 @@ offer_clone() {
     [ -t 0 ] || return 1
     printf "%s  %s not found. Clone %s\n  into %s now? [y/N] %s" \
         "$YELLOW" "$(/usr/bin/basename "$2")" "$1" "$2" "$RESET"
+    local _ans
     IFS= read -r _ans
     case "$_ans" in [yY]|[yY][eE][sS]) ;; *) return 1 ;; esac
     /usr/bin/git clone "$1" "$2"
