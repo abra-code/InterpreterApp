@@ -1,0 +1,60 @@
+#!/bin/sh
+# helpers/defaults - a fake /usr/bin/defaults backed by a flat file in the
+# harness scratch.
+#
+# The real tool writes to the developer's preferences, and this applet keeps
+# four keys there - FromLang, ToLang, ModelName, and the legacy FromIndex /
+# ToIndex it migrates from. A suite that ran the real tool would rewrite the
+# language the developer had selected, and would read back whatever they had
+# selected instead of what the test set up.
+#
+# The store is one "key<TAB>value" line per key rather than a plist, because the
+# applet only ever does "read <domain> <key>" and "write <domain> <key>
+# <value>", both of scalar strings. A plist would need plutil and would model
+# nothing the applet exercises.
+#
+# The DOMAIN is part of the record. The applet reads and writes one domain, so a
+# fake that ignored it would hide a typo'd BUNDLE_ID - the one bug that makes
+# every preference silently stop persisting.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+verb="$1"
+domain="$2"
+key="$3"
+
+store="$fake_dir/defaults.$(printf '%s' "$domain" | /usr/bin/tr -c 'A-Za-z0-9._-' '_')"
+
+case "$verb" in
+    read)
+        [ -f "$store" ] || exit 1
+        # An exact key match on the first tab-separated field. -F and -x, so a
+        # key holding a regex metacharacter cannot match a different line.
+        line="$(/usr/bin/awk -F'\t' -v k="$key" '$1==k { print substr($0, length(k)+2); found=1 }
+                                                  END { exit !found }' "$store")" || exit 1
+        printf '%s\n' "$line"
+        exit 0
+        ;;
+    write)
+        shift 3
+        value="$1"
+        /bin/mkdir -p "$(/usr/bin/dirname "$store")"
+        if [ -f "$store" ]; then
+            /usr/bin/awk -F'\t' -v k="$key" '$1!=k' "$store" > "$store.tmp"
+            /bin/mv "$store.tmp" "$store"
+        fi
+        printf '%s\t%s\n' "$key" "$value" >> "$store"
+        exit 0
+        ;;
+    delete)
+        [ -f "$store" ] || exit 0
+        /usr/bin/awk -F'\t' -v k="$key" '$1!=k' "$store" > "$store.tmp"
+        /bin/mv "$store.tmp" "$store"
+        exit 0
+        ;;
+esac
+
+# The applet uses read/write only. Anything else is a test exercising a path
+# this fake does not model, and failing loudly beats returning 0.
+printf 'fake defaults: unmodeled verb: %s\n' "$verb" >&2
+exit 70

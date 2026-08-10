@@ -25,8 +25,8 @@ done
 # Terminate the UI pollers and background download workers, verifying argv (a /bin/sh running
 # one of our scripts) so a recycled pid or an unrelated process that merely mentions the path is
 # never killed. A download killed here leaves its staging dir intact, so it resumes next time.
-for script in "$SCRIPTS_DIR/interp.poll.sh" "$SCRIPTS_DIR/interp.download.worker.sh" \
-              "$SCRIPTS_DIR/interp.models.load.sh" "$SCRIPTS_DIR/interp.models.poll.sh"; do
+for script in "$POLL_SCRIPT" "$DOWNLOAD_WORKER_SCRIPT" \
+              "$MODELS_LOAD_SCRIPT" "$MODELS_POLL_SCRIPT"; do
     for pp in $(/usr/bin/pgrep -f "$script" 2>/dev/null); do
         pargs=$(/bin/ps -p "$pp" -o args= 2>/dev/null)
         case "$pargs" in

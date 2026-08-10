@@ -16,6 +16,6 @@ case "$quiet" in ''|*[!0-9]*) quiet=0 ;; esac
 [ "$(/bin/date +%s)" -le "$quiet" ] && exit 0
 
 code=$(resolve_lang_code "$spool" "$idx")
-[ -n "$code" ] && /usr/bin/defaults write "$BUNDLE_ID" FromLang "$code"
+[ -n "$code" ] && "$defaults_tool" write "$BUNDLE_ID" FromLang "$code"
 
 exit 0

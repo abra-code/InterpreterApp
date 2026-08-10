@@ -7,8 +7,8 @@
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
-inp="$(pb_get "INTERP_DOC_INPUT_PATH")"
-pb_set "INTERP_DOC_INPUT_PATH" ""      # consume the handoff so a later open cannot reuse it
+inp="$(pb_get "$PB_DOC_INPUT")"
+pb_set "$PB_DOC_INPUT" ""      # consume the handoff so a later open cannot reuse it
 
 spool=$(spool_dir_for "$window_uuid")
 /bin/mkdir -p "$spool" "$MODELS_DIR"
@@ -37,7 +37,7 @@ else
 fi
 
 # --- spawn the UI poller (which owns the broker), in doc mode ---------------
-/bin/sh "$SCRIPTS_DIR/interp.poll.sh" "$window_uuid" "$spool" doc \
+/bin/sh "$POLL_SCRIPT" "$window_uuid" "$spool" doc \
     < /dev/null > "$spool/poll.log" 2>&1 &
 
 # First run (no model installed yet): open the model chooser over this window so the user can

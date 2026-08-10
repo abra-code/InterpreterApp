@@ -18,9 +18,9 @@ done
 
 # Static catalog fill (network, one-shot) + the download-state poller (reflects in-progress or
 # failed downloads into the slots, so reopening the chooser reconnects to a running download).
-/bin/sh "$SCRIPTS_DIR/interp.models.load.sh" "$window_uuid" \
+/bin/sh "$MODELS_LOAD_SCRIPT" "$window_uuid" \
     < /dev/null > "$CACHE_DIR/load.log" 2>&1 &
-/bin/sh "$SCRIPTS_DIR/interp.models.poll.sh" "$window_uuid" \
+/bin/sh "$MODELS_POLL_SCRIPT" "$window_uuid" \
     < /dev/null > "$CACHE_DIR/poll.log" 2>&1 &
 
 exit 0

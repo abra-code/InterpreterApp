@@ -22,7 +22,7 @@ case "$repo" in */*|.|..|.*) exit 0 ;; esac
 # and switch models on their own.
 "$dialog" "$window_uuid" 910 "Deleted $repo."
 /bin/mkdir -p "$CACHE_DIR"
-/bin/sh "$SCRIPTS_DIR/interp.models.load.sh" "$window_uuid" \
+/bin/sh "$MODELS_LOAD_SCRIPT" "$window_uuid" \
     < /dev/null > "$CACHE_DIR/load.log" 2>&1 &
 
 exit 0

@@ -62,7 +62,7 @@ cleanup() {
 trap cleanup TERM INT
 
 # --- enumerate the repo's files (path <TAB> size, files only) ----------------
-/usr/bin/curl -fsSL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
+"$curl_tool" -fsSL --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
     "https://huggingface.co/api/models/$repo/tree/main?recursive=true" 2>/dev/null \
     | /usr/bin/plutil -p - 2>/dev/null \
     | /usr/bin/awk '
@@ -114,7 +114,7 @@ while IFS="$tab" read -r p s; do
     # --retry-all-errors: LFS weights redirect to the Xet CDN with a short-lived signed URL that
     # intermittently 401s; curl's default --retry ignores 4xx. Each retry re-hits resolve for a
     # FRESH signed URL. -C - resumes any partial bytes.
-    /usr/bin/curl -fL -C - --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 30 -sS \
+    "$curl_tool" -fL -C - --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 30 -sS \
         -o "$staging/$p" "https://huggingface.co/$repo/resolve/main/$p" &
     curlpid=$!
     wait "$curlpid"; cst=$?

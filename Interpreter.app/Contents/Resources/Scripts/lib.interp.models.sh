@@ -20,7 +20,15 @@ __INTERP_MODELS_LIB=1
 
 INTERP_CATALOG_TSV="$OMC_APP_BUNDLE_PATH/Contents/Resources/models.catalog.tsv"
 
-machine_ram_bytes() { /usr/sbin/sysctl -n hw.memsize 2>/dev/null; }
+# The two substitutable binaries this library reaches for. Every handler sources
+# lib.interp.sh first, which already defines both to the same thing; they are
+# repeated here so that sourcing this file ALONE still yields a working library
+# rather than an empty command name - the failure mode of a bare "$curl_tool"
+# being a silent success with no output, which reads as an empty catalog.
+: "${curl_tool:=${INTERP_CURL_TOOL:-/usr/bin/curl}}"
+: "${sysctl_tool:=${INTERP_SYSCTL_TOOL:-/usr/sbin/sysctl}}"
+
+machine_ram_bytes() { "$sysctl_tool" -n hw.memsize 2>/dev/null; }
 
 bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf "%.1f GB", b/1000000000 }'; }
 
@@ -61,7 +69,7 @@ hf_repo_size_bytes() {   # $1 = author/name, $2 = optional single file path with
     # Timeouts are deliberately tight (8 s connect / 20 s total, one short retry round): the
     # chooser blocks its card list on the slowest probe, so on a bad network fast-missing beats
     # slow-complete - a missed row just omits a card until Refresh.
-    local _code=$(/usr/bin/curl -sSL -o "$_body" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
+    local _code=$("$curl_tool" -sSL -o "$_body" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
         "$_url" 2>/dev/null)
     case "$_code" in
         200) ;;   # got the tree in one shot - parse it below
@@ -70,7 +78,7 @@ hf_repo_size_bytes() {   # $1 = author/name, $2 = optional single file path with
             /bin/rm -f "$_body"; echo 0; return 0 ;;
         *)
             # Transient (429/5xx/network, code 000): retry properly.
-            /usr/bin/curl -fsSL -o "$_body" --connect-timeout 8 --max-time 30 \
+            "$curl_tool" -fsSL -o "$_body" --connect-timeout 8 --max-time 30 \
                 --retry 2 --retry-delay 1 --retry-all-errors "$_url" 2>/dev/null \
                 || { /bin/rm -f "$_body"; echo 0; return 0; } ;;
     esac
@@ -248,8 +256,12 @@ interp_curate_models() {   # $1 = cache file from interp_fetch_catalog
 download_worker_alive() {   # $1 = work dir
     local _pid=$(/bin/cat "$1/worker.pid" 2>/dev/null)
     case "$_pid" in ''|*[!0-9]*) return 1 ;; esac
+    # The pattern is derived from the spawned script rather than hardcoded, so a
+    # substituted worker (the test seam) and this check cannot disagree about
+    # what a live download looks like.
+    local _leaf="$(/usr/bin/basename "${DOWNLOAD_WORKER_SCRIPT:-interp.download.worker.sh}")"
     case "$(/bin/ps -p "$_pid" -o args= 2>/dev/null)" in
-        *interp.download.worker.sh*) return 0 ;;
+        *"$_leaf"*) return 0 ;;
     esac
     return 1
 }

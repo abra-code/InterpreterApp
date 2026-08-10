@@ -1,0 +1,28 @@
+#!/bin/sh
+# helpers/recorder - a fake that records the invocation and returns a scripted
+# exit code, for the tools and workers whose observable effect on a handler is
+# only that they were launched at all.
+#
+# Installed under several names; $0's basename decides which log it writes:
+#
+#   open              raises the Finder in front of whoever is running the suite
+#   curl              reaches Hugging Face
+#   sysctl            answers about THIS Mac, so a RAM-dependent curation would
+#                     produce different cards on different machines
+#   mlx-agent         loads a model - gigabytes of weights, minutes of wall time
+#   llama-server      the same, plus a listening socket
+#   pdfutil           safe in principle, but the OCR path is slow and its
+#                     answers are what several tests need to control
+#   interp.poll.sh    an unbounded poll loop that owns the broker AND keeps
+#   interp.models.load.sh    writing into the window - left running for real it
+#   interp.models.poll.sh    would race every assertion in the file
+#   interp.download.worker.sh  a multi-gigabyte download
+#
+# A recorded launch is exactly what a handler is responsible for: it spawns the
+# worker and returns. What the worker then does is the worker's own contract,
+# and is out of scope here (see the suite's README note in lib.test.interp.sh).
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+fake_emit "$fake_dir/$fake_name.out"
+exit "$(fake_rc "$fake_dir/$fake_name.rc" 0)"

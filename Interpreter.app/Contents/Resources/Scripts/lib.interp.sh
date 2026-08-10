@@ -18,14 +18,45 @@ plutil="/usr/bin/plutil"
 window_uuid="${OMC_ACTIONUI_WINDOW_UUID:-}"
 RESOURCES_DIR="$OMC_APP_BUNDLE_PATH/Contents/Resources"
 SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
-AGENT_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent"
-PDFUTIL_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/pdfutil"
+
+# --- Substitutable outside world ---------------------------------------------
+# Everything below names something this process cannot be allowed to reach in a
+# test: an inference engine that loads gigabytes of weights, a Hugging Face
+# download, the Finder, the user's real preferences and model library.
+#
+# omctest intercepts the OMC support tools by rebuilding $OMC_OMC_SUPPORT_PATH,
+# which cannot reach an absolute path or a bundled binary, so a variable is the
+# only seam available (omctest_guide.md section 8). One variable per binary,
+# holding exactly one word.
+#
+# Nothing sets these in normal use - the defaults are the real thing, and the
+# overrides exist for the test suite in ../Tests.
+AGENT_BIN="${INTERP_AGENT_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent}"
+PDFUTIL_BIN="${INTERP_PDFUTIL_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/pdfutil}"
 # llama.cpp engine for GGUF models (provisioned by update_interpreter.sh --with-llama; dylibs
 # sit beside the binary). Absent in an MLX-only build - gguf models then fail to spawn cleanly.
-LLAMA_SERVER_BIN="$OMC_APP_BUNDLE_PATH/Contents/Support/Llama.cpp/llama-server"
+LLAMA_SERVER_BIN="${INTERP_LLAMA_SERVER_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/Llama.cpp/llama-server}"
 
-# App support layout.
-APP_SUPPORT="$HOME/Library/Application Support/Interpreter"
+defaults_tool="${INTERP_DEFAULTS_TOOL:-/usr/bin/defaults}"
+open_tool="${INTERP_OPEN_TOOL:-/usr/bin/open}"
+curl_tool="${INTERP_CURL_TOOL:-/usr/bin/curl}"
+sysctl_tool="${INTERP_SYSCTL_TOOL:-/usr/sbin/sysctl}"
+
+# The background workers, named through variables for the same reason. Each is
+# an unbounded poll loop that owns a model broker or a multi-gigabyte download;
+# left to run for real under test they would spawn engines, and - worse for the
+# assertions - keep writing into the window while a section is reading it back.
+# A test points these at recorders and asserts that the right worker was
+# launched with the right arguments, which is all a handler is responsible for.
+POLL_SCRIPT="${INTERP_POLL_SCRIPT:-$SCRIPTS_DIR/interp.poll.sh}"
+MODELS_LOAD_SCRIPT="${INTERP_MODELS_LOAD_SCRIPT:-$SCRIPTS_DIR/interp.models.load.sh}"
+MODELS_POLL_SCRIPT="${INTERP_MODELS_POLL_SCRIPT:-$SCRIPTS_DIR/interp.models.poll.sh}"
+DOWNLOAD_WORKER_SCRIPT="${INTERP_DOWNLOAD_WORKER_SCRIPT:-$SCRIPTS_DIR/interp.download.worker.sh}"
+
+# App support layout. Overridable for the same reason the tools are: this is the
+# developer's real model library and session state, and a test that wrote into
+# it would edit the machine it runs on.
+APP_SUPPORT="${INTERP_APP_SUPPORT:-$HOME/Library/Application Support/Interpreter}"
 MODELS_DIR="$APP_SUPPORT/Models"
 SESSIONS_DIR="$APP_SUPPORT/Sessions"
 CACHE_DIR="$APP_SUPPORT/Cache"
@@ -64,10 +95,24 @@ BUDGET_TOKENS="1200"
 pb_set() { "$pasteboard" "$1" set "$2"; }
 pb_get() { "$pasteboard" "$1" get 2>/dev/null; }
 
+# The two window-to-window handoff keys. They are GLOBAL - one document handoff
+# and one selected-text handoff for the whole app - because each is consumed
+# immediately by the window it opens.
+#
+# The prefix exists so a test run can have handoff keys of its own. Without it
+# two omctest runs share one key in the login pasteboard server, and a value
+# left behind by one run has been measured arriving in another; the same
+# collision is possible, if far rarer, between two windows opened in quick
+# succession in the running app. Empty in normal use, so the shipped key names
+# are exactly what they were.
+PB_PREFIX="${INTERP_PB_PREFIX:-}"
+PB_DOC_INPUT="${PB_PREFIX}INTERP_DOC_INPUT_PATH"
+PB_SERVICE_TEXT="${PB_PREFIX}INTERP_SERVICE_TEXT_FILE"
+
 # Open the document-translation window for a file: stash the path on the private handoff key that
 # interp.doc.init consumes, then chain to the doc window. Shared by the launch/drop dispatcher,
 # File > Open, and the "Translate with Interpreter" file service so the handoff stays in one place.
-route_document() { pb_set "INTERP_DOC_INPUT_PATH" "$1"; "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.doc"; }
+route_document() { pb_set "$PB_DOC_INPUT" "$1"; "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.doc"; }
 
 spool_dir_for() { echo "$SESSIONS_DIR/$1"; }
 
@@ -359,17 +404,17 @@ populate_language_pickers() {   # $1 = spool
     "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_opts"
     "$dialog" "$window_uuid" "$TO_PICKER" omc_set_property "options" "$_opts"
 
-    local _from_code=$(/usr/bin/defaults read "$BUNDLE_ID" FromLang 2>/dev/null)
-    local _to_code=$(/usr/bin/defaults read "$BUNDLE_ID" ToLang 2>/dev/null)
+    local _from_code=$("$defaults_tool" read "$BUNDLE_ID" FromLang 2>/dev/null)
+    local _to_code=$("$defaults_tool" read "$BUNDLE_ID" ToLang 2>/dev/null)
     if [ -z "$_from_code" ]; then
-        _legacy=$(/usr/bin/defaults read "$BUNDLE_ID" FromIndex 2>/dev/null)
+        _legacy=$("$defaults_tool" read "$BUNDLE_ID" FromIndex 2>/dev/null)
         case "$_legacy" in ''|*[!0-9]*) ;; *) _from_code=$(/usr/bin/sed -n "${_legacy}p" "$_spool/langcodes.all") ;; esac
-        [ -n "$_from_code" ] && /usr/bin/defaults write "$BUNDLE_ID" FromLang "$_from_code"
+        [ -n "$_from_code" ] && "$defaults_tool" write "$BUNDLE_ID" FromLang "$_from_code"
     fi
     if [ -z "$_to_code" ]; then
-        _legacy=$(/usr/bin/defaults read "$BUNDLE_ID" ToIndex 2>/dev/null)
+        _legacy=$("$defaults_tool" read "$BUNDLE_ID" ToIndex 2>/dev/null)
         case "$_legacy" in ''|*[!0-9]*) ;; *) _to_code=$(/usr/bin/sed -n "${_legacy}p" "$_spool/langcodes.all") ;; esac
-        [ -n "$_to_code" ] && /usr/bin/defaults write "$BUNDLE_ID" ToLang "$_to_code"
+        [ -n "$_to_code" ] && "$defaults_tool" write "$BUNDLE_ID" ToLang "$_to_code"
     fi
 
     local _from=$(lang_code_index "$_spool" "$_from_code")

@@ -49,6 +49,6 @@ cur=$(/bin/cat "$spool/model.dir" 2>/dev/null)
 # path) - new windows and the next launch restore it instead of falling back to the first
 # installed model. Only genuine user picks reach this line (the quiet window filtered the
 # poller's own refreshes above), so an auto-selection never overwrites the preference.
-/usr/bin/defaults write "$BUNDLE_ID" ModelName "$(/usr/bin/basename "$sel")"
+"$defaults_tool" write "$BUNDLE_ID" ModelName "$(/usr/bin/basename "$sel")"
 
 exit 0

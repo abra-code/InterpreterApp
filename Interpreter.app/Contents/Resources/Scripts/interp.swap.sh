@@ -25,7 +25,7 @@ fi
 spool=$(spool_dir_for "$window_uuid")
 from_code=$(resolve_lang_code "$spool" "$to_idx")
 to_code=$(resolve_lang_code "$spool" "$from_idx")
-[ -n "$from_code" ] && /usr/bin/defaults write "$BUNDLE_ID" FromLang "$from_code"
-[ -n "$to_code" ] && /usr/bin/defaults write "$BUNDLE_ID" ToLang "$to_code"
+[ -n "$from_code" ] && "$defaults_tool" write "$BUNDLE_ID" FromLang "$from_code"
+[ -n "$to_code" ] && "$defaults_tool" write "$BUNDLE_ID" ToLang "$to_code"
 
 exit 0

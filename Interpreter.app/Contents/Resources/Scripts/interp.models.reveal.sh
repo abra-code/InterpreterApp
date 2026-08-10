@@ -15,6 +15,6 @@ repo=$(/usr/bin/printf '%s' "$line" | /usr/bin/cut -f4)
 [ -n "$repo" ] || exit 0
 
 dest="$MODELS_DIR/$repo"
-[ -d "$dest" ] && /usr/bin/open -R "$dest"
+[ -d "$dest" ] && "$open_tool" -R "$dest"
 
 exit 0

@@ -10,7 +10,7 @@ if [ -n "$OMC_OBJ_TEXT" ]; then
     tmpf="$(/usr/bin/mktemp -t interp_service_text 2>/dev/null)" || tmpf=""
     if [ -n "$tmpf" ]; then
         /usr/bin/printf '%s' "$OMC_OBJ_TEXT" > "$tmpf"
-        pb_set "INTERP_SERVICE_TEXT_FILE" "$tmpf"
+        pb_set "$PB_SERVICE_TEXT" "$tmpf"
     fi
 fi
 

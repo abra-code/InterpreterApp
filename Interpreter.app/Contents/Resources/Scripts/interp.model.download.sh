@@ -66,7 +66,7 @@ fi
 "$dialog" "$window_uuid" "$btn_id" omc_disable
 "$dialog" "$window_uuid" "$size_id" "Preparing download…"
 
-/bin/sh "$SCRIPTS_DIR/interp.download.worker.sh" "$author" "$repo" \
+/bin/sh "$DOWNLOAD_WORKER_SCRIPT" "$author" "$repo" \
     < /dev/null >> "$DOWNLOADS_DIR/$repo.log" 2>&1 &
 /usr/bin/printf '%s' $! > "$work/worker.pid"
 

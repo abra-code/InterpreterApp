@@ -72,7 +72,7 @@ sync_models() {
     local _sel_known=0
     [ -n "$_sel" ] && /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null && _sel_known=1
     if [ "$_sel_known" = 0 ]; then
-        local _saved="$(/usr/bin/defaults read "$BUNDLE_ID" ModelName 2>/dev/null)"
+        local _saved="$("$defaults_tool" read "$BUNDLE_ID" ModelName 2>/dev/null)"
         _sel=""
         [ -n "$_saved" ] && _sel="$(/usr/bin/awk -F/ -v n="$_saved" '$NF==n { print; exit }' "$spool/modelpaths" 2>/dev/null)"
         [ -n "$_sel" ] || _sel="$(/usr/bin/head -1 "$spool/modelpaths" 2>/dev/null)"
