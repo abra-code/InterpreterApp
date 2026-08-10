@@ -1,4 +1,6 @@
 # Interpreter
+![Interpreter Icon](Icon/Interpreter-macOS-256x256@1x.png)
+
 
 On-device document and text translation for macOS. Interpreter is an OMC/ActionUI shell applet that drives bundled local inference engines - [`mlx-agent`](https://github.com/abra-code/mlx-agent) (MLX) for TranslateGemma and MiLMMT-46 models, and `llama.cpp` for GGUF models such as Hy-MT2 - behind a RAM-aware model chooser. All translation happens locally.
 
