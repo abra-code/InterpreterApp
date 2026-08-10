@@ -130,7 +130,7 @@ echo "  ${GREEN}Build OK${RESET}"
 
 # ── 2. Deploy the binary + its resource bundles ───────────────────────────
 /bin/mkdir -p "$MLX_DIR" || fail "Could not create $MLX_DIR"
-/bin/cp -f "$AGENT_BUILD_DIR/mlx-agent" "$MLX_DIR/mlx-agent"
+/bin/cp -f "$AGENT_BUILD_DIR/mlx-agent" "$MLX_DIR/mlx-agent" || fail "Could not deploy mlx-agent"
 /bin/chmod +x "$MLX_DIR/mlx-agent"
 required_bundle="mlx-swift_Cmlx.bundle"
 [ -d "$AGENT_BUILD_DIR/$required_bundle" ] || fail "Required metallib bundle missing: $required_bundle"
@@ -141,8 +141,31 @@ for b in "$required_bundle" swift-crypto_Crypto.bundle swift-transformers_Hub.bu
     fi
 done
 [ -f "$MLX_DIR/$required_bundle/Contents/Resources/default.metallib" ] || fail "default.metallib not found after copy."
-[ -f "$AGENT_REPO/LICENSE" ] && /bin/cp -f "$AGENT_REPO/LICENSE" "$MLX_DIR/mlx-agent.LICENSE"
-echo "  ${GREEN}Deployed${RESET} mlx-agent + metallib"
+[ -f "$AGENT_REPO/LICENSE" ] || fail "No LICENSE in $AGENT_REPO - mlx-agent's Apache 2.0 notice has to ship with it"
+/bin/cp -f "$AGENT_REPO/LICENSE" "$MLX_DIR/mlx-agent.LICENSE" || fail "Could not deploy mlx-agent's LICENSE"
+
+# mlx-agent's own LICENSE covers mlx-agent. The binary is a STATIC link of ~18 Swift packages
+# under MIT/Apache/BSD terms, and three of them also ship the resource bundles copied just
+# above - default.metallib is compiled Metal shader code from mlx-swift (MIT), redistributed
+# with no notice of its own. Those licenses all require the notice to accompany the binary,
+# so the agent repo generates one from its resolved package graph and it ships beside the
+# binary. Generated rather than hand-maintained: a new dependency must not be able to arrive
+# without its notice, and the generator fails if any package's license text is missing.
+_notices_gen="$AGENT_REPO/tools/generate_third_party_notices.sh"
+[ -x "$_notices_gen" ] || fail "No $_notices_gen - update the mlx-agent checkout (the third-party notices ship beside the binary)"
+# Regeneration needs the SPM checkouts, which live in the agent repo's derived-data dir next
+# to the products this script copies from. They normally live or die together, but an
+# xcodebuild clean can take one and not the other - so under --skip-build, fall back to the
+# copy already deployed rather than blocking a re-sign. The gate below still refuses to sign
+# if that leaves nothing there.
+if ! "$_notices_gen" --output "$MLX_DIR/mlx-agent.THIRD-PARTY-NOTICES.txt"; then
+    if [ "$DO_BUILD" = "no" ] && [ -s "$MLX_DIR/mlx-agent.THIRD-PARTY-NOTICES.txt" ]; then
+        echo "${YELLOW}  WARNING: could not regenerate the third-party notices; keeping the deployed copy (--skip-build)${RESET}"
+    else
+        fail "Could not generate mlx-agent's third-party notices"
+    fi
+fi
+echo "  ${GREEN}Deployed${RESET} mlx-agent + metallib + third-party notices"
 
 # ── 2b. Build + embed the pdfutil helper ──────────────────────────────────
 # pdfutil (github.com/abra-code/pdfutil, Apache 2.0) replaces the old in-repo pdftext.swift:
@@ -154,7 +177,8 @@ if [ "$DO_BUILD" = "yes" ]; then
     ( cd "$PDFUTIL_REPO" && ./build.sh "$ARCH" ) || fail "pdfutil build.sh failed"
     /bin/cp -f "$PDFUTIL_REPO/build/pdfutil" "$SUPPORT_DIR/pdfutil" || fail "Could not copy pdfutil"
     /bin/chmod +x "$SUPPORT_DIR/pdfutil"
-    [ -f "$PDFUTIL_REPO/LICENSE" ] && /bin/cp -f "$PDFUTIL_REPO/LICENSE" "$SUPPORT_DIR/pdfutil.LICENSE"
+    [ -f "$PDFUTIL_REPO/LICENSE" ] || fail "No LICENSE in $PDFUTIL_REPO - pdfutil's Apache 2.0 notice has to ship with it"
+    /bin/cp -f "$PDFUTIL_REPO/LICENSE" "$SUPPORT_DIR/pdfutil.LICENSE" || fail "Could not deploy pdfutil's LICENSE"
     /bin/rm -f "$SUPPORT_DIR/pdftext"   # retire the old helper on upgrade
     echo "  ${GREEN}Built${RESET} pdfutil ($ARCH)"
 fi
@@ -170,6 +194,17 @@ if [ "$DO_LLAMA" = "yes" ]; then
     case "$ARCH" in arm64) _lasset="llama-${LLAMA_VERSION}-bin-macos-arm64.tar.gz" ;;
                     *)     _lasset="llama-${LLAMA_VERSION}-bin-macos-x64.tar.gz" ;; esac
     _lwork="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/update-interp-llama.XXXXXX")" || fail "mktemp failed"
+    # Every fail() below this point exits with the tarball plus its extracted copy (~80 MB)
+    # still in TMPDIR, so hang the cleanup off EXIT rather than repeating it at each site.
+    # The signal traps must exit: a handler that just cleans up and returns resumes the script
+    # at the point of interruption, so Ctrl-C during the ~80 MB download would carry on into
+    # thinning and signing and print "Done." Exiting re-fires the EXIT trap, so the temp tree
+    # is still reclaimed on every path.
+    trap '/bin/rm -rf "$_lwork"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    trap 'exit 131' QUIT
     echo "  Downloading llama.cpp $LLAMA_VERSION"
     /usr/bin/curl -L --fail --show-error --progress-bar -o "$_lwork/$_lasset" \
         "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/${_lasset}" \
@@ -178,12 +213,68 @@ if [ "$DO_LLAMA" = "yes" ]; then
     _lbin=$(/usr/bin/find "$_lwork/x" -name llama-server -type f | /usr/bin/head -1)
     [ -n "$_lbin" ] || fail "llama-server not in the release archive"
     /bin/rm -rf "$LLAMA_DIR" && /bin/mkdir -p "$LLAMA_DIR"
-    /bin/cp -f "$_lbin" "$LLAMA_DIR/llama-server" && /bin/chmod +x "$LLAMA_DIR/llama-server"
-    /usr/bin/find "$(/usr/bin/dirname "$_lbin")" -name "*.dylib" -maxdepth 1 -exec /bin/cp -f {} "$LLAMA_DIR/" \;
-    for _lic in "$_lwork/x/LICENSE" "$(/usr/bin/dirname "$_lbin")/../LICENSE"; do
-        [ -f "$_lic" ] && { /bin/cp -f "$_lic" "$LLAMA_DIR/LICENSE"; break; }
+    # An unchecked copy here would be the whole bug again by another door: the dylibs below are
+    # MIT too, so llama-server going missing while they land would leave a payload the license
+    # gate does not key on.
+    /bin/cp -f "$_lbin" "$LLAMA_DIR/llama-server" || fail "Could not deploy llama-server"
+    /bin/chmod +x "$LLAMA_DIR/llama-server" || fail "Could not make llama-server executable"
+    # cp -R, NOT cp -f: 18 of the archive's 35 dylibs are symlinks in a two-deep chain
+    # (libggml-base.dylib -> .0.dylib -> .0.16.0.dylib). cp -f follows them, so every library
+    # landed three times - 51 MB where 33 would do, each copy separately thinned and separately
+    # signed. BSD cp -R copies a symlink as a symlink. codesign_applet.sh only signs regular
+    # files, and the thinning loop below is -type f, so both correctly skip the links.
+    #
+    # Counted, because find -exec (and a piped while) returns 0 when NOTHING matched: a moved
+    # archive layout would otherwise deploy llama-server plus its notice and no libraries - a
+    # gate-passing, non-functional engine, which is the failure this whole block guards against.
+    # Via a list file rather than a pipe: a piped `while` runs in a subshell, so the count would
+    # not survive it, and process substitution would make this the one bashism in the file.
+    _ldylibs="$_lwork/dylibs.list"
+    # -type f -o -type l, because cp -R would happily recurse into a DIRECTORY named *.dylib -
+    # the old cp -f failed loudly on that, so the type filter has to replace the protection
+    # that switching to -R gave up.
+    /usr/bin/find "$(/usr/bin/dirname "$_lbin")" -maxdepth 1 \( -type f -o -type l \) -name "*.dylib" -print > "$_ldylibs" \
+        || { /bin/rm -rf "$LLAMA_DIR"; fail "Could not list the llama.cpp dylibs"; }
+    _ln=$(/usr/bin/wc -l < "$_ldylibs" | /usr/bin/tr -d " ")
+    [ "${_ln:-0}" -gt 0 ] || { /bin/rm -rf "$LLAMA_DIR"; fail "No dylibs beside llama-server in the llama.cpp $LLAMA_VERSION archive - the layout changed. Contents/Support/Llama.cpp has been removed."; }
+    while IFS= read -r _d; do
+        /bin/cp -R "$_d" "$LLAMA_DIR/" || { /bin/rm -rf "$LLAMA_DIR"; fail "Could not deploy $(/usr/bin/basename "$_d") (Contents/Support/Llama.cpp has been removed)"; }
+    done < "$_ldylibs"
+    # A nonzero count is not the same as a working engine: if a future layout kept the symlink
+    # chain here and moved the real libraries elsewhere, every link would deploy dangling and
+    # the count would still pass. -e follows the link, so this catches exactly that.
+    for _l in "$LLAMA_DIR"/*.dylib; do
+        [ -e "$_l" ] || { /bin/rm -rf "$LLAMA_DIR"; fail "Deployed a dangling symlink ($(/usr/bin/basename "$_l")) - the llama.cpp $LLAMA_VERSION layout changed. Contents/Support/Llama.cpp has been removed."; }
     done
-    /bin/rm -rf "$_lwork"
+    # llama.cpp is MIT: the notice must travel with the binaries we ship, so a missing LICENSE
+    # is fatal, not a shrug - 1.0 shipped bare because this was written as [ -f ] && cp, which
+    # cannot fail a build. b10056 keeps LICENSE beside llama-server; search outward from there
+    # rather than guessing at fixed paths, since the archive layout has moved before. Both the
+    # probe and the copy must happen before the EXIT trap reclaims $_lwork.
+    # The fallback filters by CONTENT first and only then takes the shallowest survivor. Depth
+    # alone is not evidence: a vendored MIT notice sitting one level above llama.cpp's own would
+    # win on position and pass a bare "is it MIT?" check, deploying the wrong text with a zero
+    # exit - worse than failing. Filtering first also stops a shallower non-MIT decoy from being
+    # picked and then rejected, which would fail a build whose archive did contain the notice.
+    _lfound="$(/usr/bin/dirname "$_lbin")/LICENSE"
+    if [ ! -f "$_lfound" ]; then
+        _lfound=$(/usr/bin/find "$_lwork/x" -maxdepth 4 -name "LICENSE*" -type f \
+                  -exec /usr/bin/grep -qi "ggml" {} \; -print \
+                  | /usr/bin/awk '{ print gsub(/\//,"/"), $0 }' \
+                  | /usr/bin/sort -n | /usr/bin/head -1 | /usr/bin/cut -d" " -f2-)
+        # A newline in a filename splits one find record into two; the tail fragment has no
+        # slashes, so it always sorts first. Anything not under the temp tree is not a path.
+        case "$_lfound" in "$_lwork"/*) ;; *) _lfound="" ;; esac
+    fi
+    # Roll the half-deployed engine back before bailing: leaving the binaries without their
+    # notice would trip the pre-signing gate on every later run, including plain re-signs.
+    [ -n "$_lfound" ] && [ -f "$_lfound" ] || { /bin/rm -rf "$LLAMA_DIR"; fail "No LICENSE in the llama.cpp $LLAMA_VERSION archive - the MIT notice has to ship beside llama-server. Contents/Support/Llama.cpp has been removed; re-run with --with-llama once the archive layout is sorted out."; }
+    # Whatever the search turned up has to actually be llama.cpp's notice, not a neighbor's -
+    # including a neighbor that is ALSO MIT. Both assertions apply to the primary probe too, so
+    # a LICENSE sitting beside llama-server still has to look like the right one.
+    /usr/bin/grep -q "MIT License" "$_lfound" && /usr/bin/grep -qi "ggml" "$_lfound" \
+        || { /bin/rm -rf "$LLAMA_DIR"; fail "The LICENSE at $_lfound is not llama.cpp's MIT notice (expected the MIT text naming the ggml authors) - Contents/Support/Llama.cpp has been removed"; }
+    /bin/cp -f "$_lfound" "$LLAMA_DIR/LICENSE" || { /bin/rm -rf "$LLAMA_DIR"; fail "Could not deploy the llama.cpp LICENSE (Contents/Support/Llama.cpp has been removed)"; }
     echo "  ${GREEN}Deployed${RESET} llama.cpp $LLAMA_VERSION -> Contents/Support/Llama.cpp"
 fi
 
@@ -199,6 +290,42 @@ for _bin in "$MLX_DIR/mlx-agent" "$LLAMA_DIR/llama-server" "$SUPPORT_DIR/pdfutil
         echo "${YELLOW}  WARNING: $(basename "$_bin") is coverage-instrumented (__llvm_prf) - rebuild without profiling for release${RESET}"
     fi
 done
+
+# Every bundled third-party binary must carry its license notice - MIT and Apache 2.0 both
+# require the notice to accompany the binary form we redistribute. The deploy steps above each
+# fail loudly on a missing LICENSE, but they only run when their stage runs: a --skip-build or
+# a plain run inherits whatever an EARLIER run left in Support. 1.0 shipped llama-server with
+# no LICENSE that way (the copy probed the wrong path and failed silently), so gate on what is
+# actually in the bundle, on every run, right before signing.
+#
+# $1 = payload that must be covered (a bundled binary, or a directory holding several),
+# $2 = the license file that has to sit with it, $3 = how to regenerate it. Two arguments, not
+# one packed "bin:license" string: a colon is legal in a macOS path (Finder writes a typed "/"
+# as ":"), and splitting such a string yields two wrong paths whose missing-binary check then
+# passes the gate silently - the exact failure mode this gate exists to catch.
+# $4 is an optional display name: basename of a DIRECTORY payload reads oddly ("MLX is in the
+# bundle"), so the legs that key on a directory name what is actually in it.
+require_license() {
+    [ -e "$1" ] || return 0
+    [ -s "$2" ] && return 0
+    fail "${4:-$(/usr/bin/basename "$1")} is in the bundle but ${2#"$APP_BUNDLE"/} is missing or empty - its license notice must ship with it. Re-run with $3."
+}
+require_license "$MLX_DIR/mlx-agent"   "$MLX_DIR/mlx-agent.LICENSE" "a full build (no --skip-build)"
+require_license "$SUPPORT_DIR/pdfutil" "$SUPPORT_DIR/pdfutil.LICENSE" "a full build (no --skip-build)"
+# Keyed on the resource bundles as well as the binary: mlx-swift's default.metallib and the
+# swift-crypto / swift-transformers bundles are third-party payload in their own right, so a
+# deploy that landed them without the binary must still be caught.
+if [ -f "$MLX_DIR/mlx-agent" ] || [ -n "$(/usr/bin/find "$MLX_DIR" -maxdepth 1 -name "*.bundle" -print -quit 2>/dev/null)" ]; then
+    require_license "$MLX_DIR" "$MLX_DIR/mlx-agent.THIRD-PARTY-NOTICES.txt" "a full build (no --skip-build)" "mlx-agent and its resource bundles"
+fi
+# Keyed on the directory, not on llama-server: the ~30 ggml/llama dylibs beside it are MIT in
+# their own right, so a deploy that dropped the server but landed the libraries must still be
+# caught. Anything in there other than the notice itself counts as payload - "! -type d" and
+# not "-type f", because 18 of those dylibs are now symlinks and -type f would look straight
+# past a directory holding nothing else.
+if [ -n "$(/usr/bin/find "$LLAMA_DIR" ! -type d ! -name LICENSE -print -quit 2>/dev/null)" ]; then
+    require_license "$LLAMA_DIR" "$LLAMA_DIR/LICENSE" "--with-llama" "the llama.cpp engine"
+fi
 
 # ── 2e. Thin every Mach-O to $ARCH ────────────────────────────────────────
 # Interpreter.app ships Apple-Silicon-only. The OMC executable and Abracode.framework pieces
