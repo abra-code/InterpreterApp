@@ -184,6 +184,18 @@ if [ "$DO_BUILD" = "yes" ]; then
 fi
 [ -x "$SUPPORT_DIR/pdfutil" ] || fail "No pdfutil at $SUPPORT_DIR/pdfutil (build first, or drop --skip-build)."
 
+# ── 2b2. Build + embed the langid helper ──────────────────────────────────
+# langid identifies a document's source language (Tools/langid in THIS repo - unlike mlx-agent
+# and pdfutil it is not a sibling checkout, so there is nothing to locate and no third-party
+# LICENSE to ship beside it). NaturalLanguage only: no model, no Apple Intelligence, ~3 ms.
+if [ "$DO_BUILD" = "yes" ]; then
+    ( cd "$SCRIPT_DIR/Tools/langid" && ./build.sh "$ARCH" ) || fail "langid build.sh failed"
+    /bin/cp -f "$SCRIPT_DIR/Tools/langid/build/langid" "$SUPPORT_DIR/langid" || fail "Could not copy langid"
+    /bin/chmod +x "$SUPPORT_DIR/langid"
+    echo "  ${GREEN}Built${RESET} langid ($ARCH)"
+fi
+[ -x "$SUPPORT_DIR/langid" ] || fail "No langid at $SUPPORT_DIR/langid (build first, or drop --skip-build)."
+
 # ── 2c. llama.cpp engine (gguf models, opt-in) ────────────────────────────
 # Prebuilt upstream release tarball -> Contents/Support/Llama.cpp/ (llama-server + dylibs,
 # @rpath-linked so they only need to sit together). Same provisioning as AIChat V2, but pinned:
@@ -284,7 +296,7 @@ fi
 # profraw. Sweep profiling artifacts (and Finder droppings) before signing, and warn if a
 # deployed binary is itself instrumented: instrumentation has no place in a shipping build.
 /usr/bin/find "$SUPPORT_DIR" \( -name "*.profraw" -o -name "*.profdata" -o -name ".DS_Store" \) -delete
-for _bin in "$MLX_DIR/mlx-agent" "$LLAMA_DIR/llama-server" "$SUPPORT_DIR/pdfutil"; do
+for _bin in "$MLX_DIR/mlx-agent" "$LLAMA_DIR/llama-server" "$SUPPORT_DIR/pdfutil" "$SUPPORT_DIR/langid"; do
     [ -f "$_bin" ] || continue
     if /usr/bin/otool -l "$_bin" 2>/dev/null | /usr/bin/grep -q "__llvm_prf"; then
         echo "${YELLOW}  WARNING: $(basename "$_bin") is coverage-instrumented (__llvm_prf) - rebuild without profiling for release${RESET}"
@@ -376,6 +388,14 @@ if "$SUPPORT_DIR/pdfutil" --version 2>/dev/null | /usr/bin/grep -q "^pdfutil "; 
     echo "  ${GREEN}Verify OK${RESET}: pdfutil launches"
 else
     fail "pdfutil did not report its version - build/link failure."
+fi
+
+# langid --version prints "langid <ver>" and exits 0, proving NaturalLanguage linked. Bare
+# langid with no stdin prints usage and exits 2, so match the output rather than the status.
+if "$SUPPORT_DIR/langid" --version 2>/dev/null | /usr/bin/grep -q "^langid "; then
+    echo "  ${GREEN}Verify OK${RESET}: langid launches"
+else
+    fail "langid did not report its version - build/link failure."
 fi
 
 echo

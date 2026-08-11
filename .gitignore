@@ -4,3 +4,5 @@ Interpreter.app/Contents/Support
 Interpreter.app/Contents/_CodeSignature
 .DS_Store
 Private
+Tools/langid/.build
+Tools/langid/build
