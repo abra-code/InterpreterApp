@@ -46,39 +46,171 @@ check "a window opened with no handoff says so" "No input document." \
     "$(ui_value "$STATUS_TEXT")"
 check "and records no input path" "" "$(input_path)"
 
-section "the default output sits next to the original and never overwrites"
+section "the default output is named for its language, sits next to the original, and never overwrites"
 doc="$(make_text_file report.txt 'text')"
 open_doc_window "$doc"
-check "the default output was computed" "$OMCTEST_WORK/report-translated.txt" \
+# The name carries the language the file is IN, so translating one document into several
+# languages leaves files that can be told apart instead of one that each run supersedes.
+check "the default output was computed" "$OMCTEST_WORK/report-es.txt" \
     "$(output_path)"
-check "and shown in the window"         "$OMCTEST_WORK/report-translated.txt" \
+check "and shown in the window"         "$OMCTEST_WORK/report-es.txt" \
     "$(ui_value "$OUTPUT_PATH_TEXT")"
+check "the suffix is the To picker's language" "es" \
+    "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$TO_PICKER")")"
+# Nothing is written yet, so there is nothing to preview or reveal.
+check "the output preview starts empty" "" "$(ui_value "$QL_OUTPUT")"
+check "and Reveal starts off"           "0" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
 
 # With that name already taken, the next one has to be free rather than clobber it.
-printf 'an earlier translation\n' > "$OMCTEST_WORK/report-translated.txt"
+printf 'an earlier translation\n' > "$OMCTEST_WORK/report-es.txt"
 open_doc_window "$doc"
-check "an existing translation is not overwritten" "$OMCTEST_WORK/report-translated-1.txt" \
+check "an existing translation is not overwritten" "$OMCTEST_WORK/report-es-1.txt" \
     "$(output_path)"
-printf 'and another\n' > "$OMCTEST_WORK/report-translated-1.txt"
+printf 'and another\n' > "$OMCTEST_WORK/report-es-1.txt"
 open_doc_window "$doc"
-check "and it keeps counting"                      "$OMCTEST_WORK/report-translated-2.txt" \
+check "and it keeps counting"                      "$OMCTEST_WORK/report-es-2.txt" \
     "$(output_path)"
 check "the earlier files are still there"          "an earlier translation" \
-    "$(/bin/cat "$OMCTEST_WORK/report-translated.txt")"
-/bin/rm -f "$OMCTEST_WORK/report-translated.txt" "$OMCTEST_WORK/report-translated-1.txt"
+    "$(/bin/cat "$OMCTEST_WORK/report-es.txt")"
+/bin/rm -f "$OMCTEST_WORK/report-es.txt" "$OMCTEST_WORK/report-es-1.txt"
 
 section "unique_output_path handles a name with no extension, and one with several"
-check "no extension"    "$OMCTEST_WORK/README-translated.txt" \
-    "$(interp_call unique_output_path "$OMCTEST_WORK/README")"
+check "no extension"    "$OMCTEST_WORK/README-pl.txt" \
+    "$(interp_call unique_output_path "$OMCTEST_WORK/README" pl)"
 # Only the LAST extension is dropped, so "notes.v2.txt" keeps its version.
-check "several dots"    "$OMCTEST_WORK/notes.v2-translated.txt" \
-    "$(interp_call unique_output_path "$OMCTEST_WORK/notes.v2.txt")"
+check "several dots"    "$OMCTEST_WORK/notes.v2-pl.txt" \
+    "$(interp_call unique_output_path "$OMCTEST_WORK/notes.v2.txt" pl)"
+# A regional code is a filename like any other, and stays intact.
+check "a regional code"  "$OMCTEST_WORK/notes-zh-Hans.txt" \
+    "$(interp_call unique_output_path "$OMCTEST_WORK/notes.txt" zh-Hans)"
+
+section "switching the To language renames the output and drops the stale preview"
+# The bug this covers: with one name for every language, a second run into a different language
+# overwrote the first file and the right-hand pane went on showing the earlier translation.
+doc="$(make_text_file memoir.txt 'text')"
+open_doc_window "$doc"
+# The first translation into Spanish, as the poller would have left it.
+printf 'la traduccion\n' > "$OMCTEST_WORK/memoir-es.txt"
+interp_call refresh_doc_output "$(spool_dir)" es
+check "the Spanish output is previewed" "$OMCTEST_WORK/memoir-es.txt" "$(ui_value "$QL_OUTPUT")"
+check "and Reveal is on"                "1" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
+
+# populate leaves a quiet window in which the change handler ignores its picker, because the
+# programmatic restore fires it too; a real user pick lands after it has passed.
+printf '0' > "$(spool_dir)/lang_quiet"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" pl)"
+omc_run interp.to.changed
+check "the output is named for Polish now" "$OMCTEST_WORK/memoir-pl.txt" "$(output_path)"
+check "and shown"                          "$OMCTEST_WORK/memoir-pl.txt" \
+    "$(ui_value "$OUTPUT_PATH_TEXT")"
+# There is no Polish translation yet, so the pane must not keep showing the Spanish one.
+check "the Spanish preview is gone" "" "$(ui_value "$QL_OUTPUT")"
+check "and Reveal went off"         "0" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
+check "the To language was persisted" "pl" "$(pref ToLang)"
+
+# Back to Spanish: the file this window already produced is reused rather than uniquified away
+# from, so a re-run replaces its own output instead of piling up memoir-es-1, -2, -3.
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" es)"
+omc_run interp.to.changed
+check "the earlier Spanish output is reused" "$OMCTEST_WORK/memoir-es.txt" "$(output_path)"
+check "and comes back into the preview"      "$OMCTEST_WORK/memoir-es.txt" \
+    "$(ui_value "$QL_OUTPUT")"
+check "with Reveal back on"                  "1" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
+/bin/rm -f "$OMCTEST_WORK/memoir-es.txt"
+
+section "the text window is untouched by any of that"
+# interp.to.changed is shared with the translator window, which has no output file at all. The
+# spool is given an input document so the mode gate is the ONLY thing standing between the handler
+# and an output path - otherwise this section would pass for the wrong reason, "there was nothing
+# to derive a name from" being indistinguishable from "the gate held".
+reset_document
+/bin/mkdir -p "$(spool_dir)"
+printf '%s' "$(make_text_file decoy.txt 'text')" > "$(spool_dir)/input.path"
+interp_call populate_language_pickers "$(spool_dir)" >/dev/null 2>&1
+printf '0' > "$(spool_dir)/lang_quiet"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" pl)"
+omc_run interp.to.changed
+check "the selection is still persisted" "pl" "$(pref ToLang)"
+check "and no output path was invented" "" "$(output_path)"
+# The positive control: the same spool in document mode does derive one.
+printf 'doc' > "$(spool_dir)/mode"
+omc_run interp.to.changed
+check "which the document window would have" "$OMCTEST_WORK/decoy-pl.txt" "$(output_path)"
+
+section "pointing the preview at a file it already shows still reloads it"
+# QuickLook ignores a source string it already holds, so a re-run into the SAME language - which
+# overwrites its own file, same path, new text - would leave the previous translation on screen.
+# Clearing first is what makes the second write a change the element acts on.
+reset_document
+target="$OMCTEST_WORK/preview.txt"
+printf 'first\n' > "$target"
+interp_call set_quicklook "$QL_OUTPUT" "$target"
+check "the preview was cleared first"  "" "$(ui_writes "$QL_OUTPUT" | /usr/bin/sed -n 1p)"
+check "and then pointed at the file"   "$target" "$(ui_writes "$QL_OUTPUT" | /usr/bin/sed -n 2p)"
+check "which is two writes, not one"   "2" "$(ui_writes "$QL_OUTPUT" | /usr/bin/grep -c '')"
+ui_reset
+interp_call set_quicklook "$QL_OUTPUT" ""
+check "clearing it is a single write"  "1" "$(ui_writes "$QL_OUTPUT" | /usr/bin/grep -c '')"
+check "of nothing"                     "" "$(ui_value "$QL_OUTPUT")"
+
+section "delivering a finished translation writes it and shows what it wrote"
+# The poller itself cannot run under test - it is an unbounded loop that would race every
+# assertion - so the delivery it performs lives in a library function, and this is that function.
+# Everything the user sees at the end of a translation is decided here.
+reset_document
+/bin/mkdir -p "$(spool_dir)"
+dest="$OMCTEST_WORK/delivered-pl.txt"
+/bin/rm -f "$dest"
+printf 'stale from the previous run\n' > "$dest"
+printf '%s' "$dest" > "$(spool_dir)/job.output.path"
+printf 'the new translation\n' > "$(spool_dir)/result.txt"
+check "it reports a delivery" "yes" "$(interp_is deliver_doc_result "$(spool_dir)")"
+check "the file holds the new translation" "the new translation" "$(/bin/cat "$dest")"
+check "the Output field names it"  "$dest" "$(ui_value "$OUTPUT_PATH_TEXT")"
+check "and it is recorded"         "$dest" "$(output_path)"
+check "Reveal came on"             "1" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
+# The reported bug: the destination was overwritten in place, so an unforced QuickLook would go
+# on showing the previous language's words. Delivery must clear the pane before re-pointing it.
+check "the preview was reloaded, not merely re-set" "2" \
+    "$(ui_writes "$QL_OUTPUT" | /usr/bin/grep -c '')"
+check "ending on the delivered file" "$dest" "$(ui_value "$QL_OUTPUT")"
+
+# The destination captured at dispatch wins over the current default name, which the To picker is
+# free to have moved while the translation ran.
+ui_reset
+printf '%s' "$OMCTEST_WORK/moved-on-es.txt" > "$(spool_dir)/output.path"
+printf 'again\n' > "$(spool_dir)/result.txt"
+interp_call deliver_doc_result "$(spool_dir)" >/dev/null 2>&1
+check "the job's own destination was used" "again" "$(/bin/cat "$dest")"
+check_absent "and the newer name was left alone" "$OMCTEST_WORK/moved-on-es.txt"
+
+# With no destination at all there is nothing to deliver: rc 2 tells the poller to try again
+# later rather than mark this result delivered.
+ui_reset
+/bin/rm -f "$(spool_dir)/job.output.path" "$(spool_dir)/output.path"
+interp_call deliver_doc_result "$(spool_dir)" >/dev/null 2>&1
+check "no destination is not a delivery" "2" "$?"
+check "and nothing was said about it"    "" "$(ui_value "$STATUS_TEXT")"
+
+# A write that cannot land says so, rather than leaving reflect_ui's independent "Ready" to
+# suggest a file was saved that was not.
+ui_reset
+unwritable="$OMCTEST_WORK/no-such-directory/out.txt"
+printf '%s' "$unwritable" > "$(spool_dir)/job.output.path"
+interp_call deliver_doc_result "$(spool_dir)" >/dev/null 2>&1
+check "a failed write is reported as one" "1" "$?"
+check "and the status line says where"    "Could not write the translation to $unwritable" \
+    "$(ui_value "$STATUS_TEXT")"
+check "Reveal was not turned on"          "" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
 
 section "choosing a different output takes effect from the next Translate"
 doc="$(make_text_file memo.txt 'text')"
 open_doc_window "$doc"
 elsewhere="$OMCTEST_WORK/Elsewhere/memo-fr.txt"
 /bin/mkdir -p "$OMCTEST_WORK/Elsewhere"
+# The engine hands a handler the picker's current value; here the window opened on the default To
+# language, so that is what Choose... is answering for.
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" es)"
 omc_dialog_answer save_as "$elsewhere"
 omc_run interp.doc.choose.output
 check "the new path was recorded" "$elsewhere" "$(output_path)"
@@ -88,6 +220,40 @@ check "and shown"                 "$elsewhere" "$(ui_value "$OUTPUT_PATH_TEXT")"
 omc_dialog_answer save_as ""
 omc_run interp.doc.choose.output
 check "cancelling leaves it alone" "$elsewhere" "$(output_path)"
+
+# A chosen path is remembered against the language it was chosen for, so it survives a trip
+# through the To picker rather than being re-derived over the top of the user's decision.
+printf '0' > "$(spool_dir)/lang_quiet"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" pl)"
+omc_run interp.to.changed
+check "another language derives its own name" "$OMCTEST_WORK/memo-pl.txt" "$(output_path)"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" es)"
+omc_run interp.to.changed
+check "and coming back restores the choice"   "$elsewhere" "$(output_path)"
+
+# Now the same thing after a USER pick, which is where the language a choice is filed under can
+# disagree with the spool: a pick made inside populate's quiet window is deliberately ignored by
+# interp.to.changed, so the spool still says Spanish while the picker says Polish. Save As must
+# file the choice under what the PICKER says, or the next Translate - which settles its
+# destination from the memo for the language it dispatches - would never see it.
+doc="$(make_text_file quiet.txt 'Some text.')"
+open_doc_window "$doc"
+printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
+chosen="$OMCTEST_WORK/Elsewhere/a chosen name.txt"
+# Pinned rather than left to the clock: the window populate arms is two seconds and the handler
+# runs about a tenth of a second later, so the pick would be swallowed anyway - but by accident of
+# timing rather than as a fact of the test, and a loaded machine could turn that into a flake.
+printf '%s' "$(( $(/bin/date +%s) + 3600 ))" > "$(spool_dir)/lang_quiet"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" pl)"
+omc_run interp.to.changed          # swallowed: inside the quiet window
+check "the spool did not follow the pick" "es" "$(spool_file to.code)"
+omc_dialog_answer save_as "$chosen"
+omc_run interp.doc.choose.output
+check "the choice was filed under Polish" "$chosen" "$(spool_file outputs/pl)"
+omc_control "$FROM_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
+omc_run interp.doc.translate
+check "and Translate honors it"           "$chosen" "$(output_path)"
+check "as the job's destination"          "$chosen" "$(spool_file job.output.path)"
 
 section "Reveal opens the Finder only once there is something to show"
 doc="$(make_text_file shown.txt 'text')"
@@ -125,6 +291,21 @@ check "Reveal went off"     "0" "$(ui_enabled "$REVEAL_OUTPUT_BTN")"
 check "the status line says so" "Translating…" "$(ui_value "$STATUS_TEXT")"
 check "the dispatch lock was released" "no" \
     "$([ -d "$(spool_dir)/dispatch.lock" ] && echo yes || echo no)"
+# The destination follows the language dispatched, which the picker can carry without
+# interp.to.changed ever running - a programmatic set, or this very test.
+check "the destination follows the To language" "$OMCTEST_WORK/source-en.txt" "$(output_path)"
+check "and was captured for this job"           "$OMCTEST_WORK/source-en.txt" \
+    "$(spool_file job.output.path)"
+
+# A To change while the translation is in flight moves the default name for the NEXT run. The
+# job already dispatched keeps the destination it was dispatched with, so the poller cannot be
+# made to write this translation under another language's name.
+printf '0' > "$(spool_dir)/lang_quiet"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" de)"
+omc_run interp.to.changed
+check "the next run would go to German" "$OMCTEST_WORK/source-de.txt" "$(output_path)"
+check "the job in flight is unmoved"    "$OMCTEST_WORK/source-en.txt" \
+    "$(spool_file job.output.path)"
 
 section "a stale cancel flag does not kill the next run"
 # Stop during a PREVIOUS conversion leaves convert.cancel behind. A fresh run

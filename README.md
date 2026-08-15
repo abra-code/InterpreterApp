@@ -7,7 +7,7 @@ On-device document and text translation for macOS. Interpreter is an OMC/ActionU
 Two modes:
 
 - Text window: type or paste text, pick From/To languages, translate.
-- Document window: pick/drop a document; Interpreter converts it to plain text, translates it, and writes a `<name>-translated.txt` next to the original.
+- Document window: pick/drop a document; Interpreter converts it to plain text, translates it, and writes a `<name>-<language>.txt` next to the original (`report.txt` translated into Polish becomes `report-pl.txt`), so several target languages leave several files.
 
 ## On-device by design
 

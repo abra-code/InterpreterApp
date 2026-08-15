@@ -260,6 +260,15 @@ chooser_marker() { printf '%s/.chooser.%s' "$(downloads_dir)" "$OMC_ACTIONUI_WIN
 
 spool_file() { /bin/cat "$(spool_dir)/$1" 2>/dev/null; }
 
+# Every value written to a view, in order, one per line - from the journal, not the
+# last-write-wins mirror ui_value reads. A QuickLook reload is a SEQUENCE, "" and then the path,
+# because the element ignores a source it already holds; the mirror shows the same final path
+# either way and so cannot tell a forced reload from a write that changed nothing.
+ui_writes() { # <view-id>
+    /usr/bin/awk -F'\t' -v id="$1" '$2 == id { sub(/ +$/, "", $3); print $3 }' \
+        "$OMCTEST_UI/journal.tsv" 2>/dev/null
+}
+
 langcodes()     { spool_file langcodes; }
 langcodes_all() { spool_file langcodes.all; }
 langfamily()    { spool_file langfamily; }

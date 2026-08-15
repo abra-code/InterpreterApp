@@ -1,9 +1,9 @@
 # interp.doc.init - fired when the document-translation window loads. Reads the input path handed
-# off by interp.open (private pasteboard), previews the original document on the left, computes a
-# unique default output path, populates the language pickers, and spawns the shared UI poller in
-# "doc" mode. As in the text window, the poller (single owner) discovers/loads the model, keeps
-# the Model picker in sync, and reflects status; on completion it writes the translation to the
-# output file and points the right-hand QuickLook at it.
+# off by interp.open (private pasteboard), previews the original document on the left, populates
+# the language pickers, computes the output path for the To language, and spawns the shared UI
+# poller in "doc" mode. As in the text window, the poller (single owner) discovers/loads the
+# model, keeps the Model picker in sync, and reflects status; on completion it writes the
+# translation to the output file and points the right-hand QuickLook at it.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
@@ -23,15 +23,15 @@ set_status "Starting…"
 populate_language_pickers "$spool"
 
 # Input document: preview the original (formatted) on the left and remember its path for dispatch.
-# Default output = "<name>-translated.txt" next to the original, made unique so nothing is clobbered.
+# Default output = "<name>-<to-language>.txt" next to the original, made unique so nothing is
+# clobbered; it is re-derived whenever the To picker changes, so the file is always named after the
+# language it holds.
 if [ -n "$inp" ] && [ -e "$inp" ]; then
     /usr/bin/printf '%s' "$inp" > "$spool/input.path"
     "$dialog" "$window_uuid" "$INPUT_PATH_TEXT" "$inp"
     "$dialog" "$window_uuid" "$QL_INPUT" "$inp"
 
-    out="$(unique_output_path "$inp")"
-    /usr/bin/printf '%s' "$out" > "$spool/output.path"
-    "$dialog" "$window_uuid" "$OUTPUT_PATH_TEXT" "$out"
+    refresh_doc_output "$spool" "$(/bin/cat "$spool/to.code" 2>/dev/null)"
 else
     set_status "No input document."
 fi

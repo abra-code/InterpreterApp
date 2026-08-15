@@ -120,6 +120,29 @@ set_status()   { "$dialog" "$window_uuid" "$STATUS_TEXT" "$1"; }
 enable_ctrl()  { "$dialog" "$window_uuid" "$1" omc_enable; }
 disable_ctrl() { "$dialog" "$window_uuid" "$1" omc_disable; }
 
+# Point a QuickLook view at a file, or clear it with "". The reload is FORCED: the element ignores
+# a source string it already holds (ActionUI's preview keeps the last-applied path and compares
+# against it), so a file overwritten in place - same path, new contents - would go on showing the
+# previous translation. Clearing to "" first makes the second write a genuine change; the pause
+# between the two is what keeps them two updates rather than one coalesced re-render.
+#
+# The pause is a margin, not a measurement: each write is handled synchronously on the main thread,
+# so the two are separate renders as long as the run loop turns between them, which 0.3s buys
+# comfortably unless the main thread is blocked for the whole interval (a modal alert, a very slow
+# preview load). The failure mode if it is not enough is the old behavior - the pane keeps the
+# previous contents - so this degrades to the bug rather than to something worse. The tempting
+# deterministic alternative, alternating between "/path" and "file:///path" so the strings differ,
+# is NOT usable: ActionUI resolves a "file://" source with URL(string:), which parses "#" and "?"
+# as URL delimiters, so "notes#1.txt" - a legal APFS name - would preview "/dir/notes" instead.
+# Showing the WRONG file is worse than failing to reload the right one. (Spaces and non-ASCII are
+# fine there since macOS 14, which percent-encodes them; the delimiters are the real problem.)
+set_quicklook() {   # $1 = view id, $2 = file path ("" clears the preview)
+    "$dialog" "$window_uuid" "$1" ""
+    [ -n "$2" ] || return 0
+    /bin/sleep 0.3
+    "$dialog" "$window_uuid" "$1" "$2"
+}
+
 # Present a modal alert over this window (ActionUI/OMC omc_present_alert): title, message, one OK
 # button. Use this for errors the user must see now, rather than only leaving a status-line trace.
 present_alert() { "$dialog" "$window_uuid" omc_window omc_present_alert "$1" "$2" "OK::"; }
@@ -424,6 +447,16 @@ populate_language_pickers() {   # $1 = spool
     [ -n "$_to" ] || _to=$(lang_code_index "$_spool" es)
     case "$_to" in ''|*[!0-9]*) _to=$_from ;; esac
 
+    # The To language as a CODE, for handlers that need it without a picker value in hand: the
+    # document window names its output file after it, and the sets below are made inside the quiet
+    # window, where interp.to.changed deliberately does nothing.
+    #
+    # It is a cache, not an authority. interp.to.changed is the only other writer, and it too skips
+    # the quiet window, so a user pick made in those two seconds leaves this behind until the next
+    # pick or the next Translate (which settles the destination from the picker itself). Anything
+    # that would MISFILE a decision on a stale answer - the Save As memo - reads the picker instead.
+    /usr/bin/printf '%s' "$(resolve_lang_code "$_spool" "$_to")" > "$_spool/to.code"
+
     # Quiet window for the programmatic sets below: the change handlers skip persisting inside
     # it, so a family-filter fallback (saved language not in this list) cannot overwrite the
     # saved preference. Mirrors the model picker's picker_quiet.
@@ -684,17 +717,116 @@ pdf_extract_text() {   # $1 = input pdf, $2 = output txt, $3 = spool, $4 = From 
     return 0
 }
 
-# Default translated-output path for an input document: "<name-no-ext>-translated.txt" next to the
-# original, made unique by appending -1, -2, ... so an existing file is never overwritten.
-unique_output_path() {   # $1 = input path
+# --- document-mode output file ------------------------------------------------------------------
+# The translation is named after the language it is IN - "report.txt" -> "report-pl.txt" - so
+# translating one document into several languages leaves a set of files that can be told apart
+# rather than one "-translated.txt" that each run silently supersedes. The name therefore follows
+# the To picker and is recomputed whenever it changes, not once when the window opens.
+
+# The path a FRESH translation into <code> would take: "<name-no-ext>-<code>.txt" next to the
+# original, made unique by appending -1, -2, ... so a file the user already has is never
+# overwritten.
+unique_output_path() {   # $1 = input path, $2 = target language code
     local _dir _base _cand _n
     _dir=$(/usr/bin/dirname "$1")
     _base=$(/usr/bin/basename "$1"); _base="${_base%.*}"
-    _cand="$_dir/${_base}-translated.txt"
+    _cand="$_dir/${_base}-${2}.txt"
     _n=1
     while [ -e "$_cand" ]; do
-        _cand="$_dir/${_base}-translated-${_n}.txt"
+        _cand="$_dir/${_base}-${2}-${_n}.txt"
         _n=$((_n + 1))
     done
     /usr/bin/printf '%s' "$_cand"
+}
+
+# Remember the output path this window uses for a target language (spool/outputs/<code>).
+doc_remember_output() {   # $1 = spool, $2 = target language code, $3 = path
+    [ -n "$2" ] && [ -n "$3" ] || return 0
+    /bin/mkdir -p "$1/outputs"
+    /usr/bin/printf '%s' "$3" > "$1/outputs/$2"
+}
+
+# The output path this window uses for <code>, minting and remembering one on first use. The memo
+# is what makes the name stable across a round trip through the To picker: the first translation
+# into Polish creates "report-pl.txt", and coming back to Polish later reuses that file - a second
+# Translate overwrites its OWN previous output - instead of uniquifying away from it to
+# "report-pl-1.txt" because the file it is about to replace happens to exist. A path the user chose
+# explicitly (Save As) is memoized the same way, so that choice survives switching language and
+# back too. Prints nothing when there is no input document or no target language yet.
+doc_output_path_for() {   # $1 = spool, $2 = target language code
+    local _path _inp
+    [ -n "$2" ] || return 0
+    _path=$(/bin/cat "$1/outputs/$2" 2>/dev/null)
+    if [ -z "$_path" ]; then
+        _inp=$(/bin/cat "$1/input.path" 2>/dev/null)
+        [ -n "$_inp" ] || return 0
+        _path=$(unique_output_path "$_inp" "$2")
+        doc_remember_output "$1" "$2" "$_path"
+    fi
+    /usr/bin/printf '%s' "$_path"
+}
+
+# Settle the document window's output on the file for <code>: record it and show it in the Output
+# field, printing the path. Fails (and changes nothing) when there is no input document or no
+# target language yet. Like every helper here, the spool argument says which window's STATE to
+# read; the window WRITTEN to is always the ambient one ($window_uuid).
+set_doc_output() {   # $1 = spool, $2 = target language code
+    local _out
+    _out=$(doc_output_path_for "$1" "$2")
+    [ -n "$_out" ] || return 1
+    /usr/bin/printf '%s' "$_out" > "$1/output.path"
+    # Silenced: this function's stdout IS the path, and callers capture it (or redirect it into a
+    # file), so anything the control tool has to say must not join it.
+    "$dialog" "$window_uuid" "$OUTPUT_PATH_TEXT" "$_out" > /dev/null
+    /usr/bin/printf '%s' "$_out"
+}
+
+# The same, with the right-hand preview and Reveal brought along: the file itself when it already
+# exists (a language switched back to), and nothing otherwise, so the pane never goes on showing
+# the PREVIOUS language's translation. This is the form for a change of destination the user did
+# not ask to translate yet; a dispatch uses set_doc_output instead, keeping the outgoing
+# translation on screen while the new one is being made.
+refresh_doc_output() {   # $1 = spool, $2 = target language code
+    local _out
+    _out=$(set_doc_output "$1" "$2") || return 0
+    if [ -f "$_out" ]; then
+        set_quicklook "$QL_OUTPUT" "$_out"
+        enable_ctrl "$REVEAL_OUTPUT_BTN"
+    else
+        set_quicklook "$QL_OUTPUT" ""
+        disable_ctrl "$REVEAL_OUTPUT_BTN"
+    fi
+}
+
+# Deliver a finished document translation: write the broker's result to the destination the job was
+# dispatched with, then point the window's Output field, preview and Reveal at the file actually
+# written - which is not necessarily the current default name, the To picker being free to move
+# while a translation runs.
+#
+# Returns 0 when the file was written, 1 when the write failed (said so in the status line), and 2
+# when there is no destination recorded at all, which is the caller's cue to try again later rather
+# than treat this result as delivered.
+deliver_doc_result() {   # $1 = spool
+    local _out
+    # The destination captured at dispatch, so a To change made while the job was in flight
+    # (which re-derives the default name for the next run) cannot retarget this write.
+    _out=$(/bin/cat "$1/job.output.path" 2>/dev/null)
+    [ -n "$_out" ] || _out=$(/bin/cat "$1/output.path" 2>/dev/null)
+    [ -n "$_out" ] || return 2
+
+    # Atomic: the temporary lands beside the destination, so the move is a rename within one
+    # filesystem and a reader never sees a half-written translation.
+    if /bin/cat "$1/result.txt" > "$_out.part.$$" 2>/dev/null && /bin/mv "$_out.part.$$" "$_out" 2>/dev/null; then
+        /usr/bin/printf '%s' "$_out" > "$1/output.path"
+        "$dialog" "$window_uuid" "$OUTPUT_PATH_TEXT" "$_out"
+        # Through set_quicklook because a re-translation into the SAME language overwrites the
+        # same path, and an unforced QuickLook would keep showing the previous text.
+        set_quicklook "$QL_OUTPUT" "$_out"
+        enable_ctrl "$REVEAL_OUTPUT_BTN"
+        return 0
+    fi
+
+    /bin/rm -f "$_out.part.$$"
+    set_status "Could not write the translation to $_out"
+    return 1
 }

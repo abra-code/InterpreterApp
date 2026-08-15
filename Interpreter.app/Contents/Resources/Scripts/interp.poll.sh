@@ -100,6 +100,11 @@ sync_languages() {
     local _fam=$(model_family_of "$(/bin/cat "$spool/model.dir" 2>/dev/null)")
     [ "$_fam" = "$(/bin/cat "$spool/langfamily" 2>/dev/null)" ] && return 0
     populate_language_pickers "$spool"
+    # That fallback can land the To picker on a different language, and in document mode the
+    # output file is named after it - so the destination follows the picker here too.
+    if [ "$MODE" = doc ]; then
+        refresh_doc_output "$spool" "$(/bin/cat "$spool/to.code" 2>/dev/null)"
+    fi
 }
 
 # --- ensure one broker is running for the selected model --------------------
@@ -265,22 +270,16 @@ reflect_result() {
         local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
         local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
         [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
-        local _out="$(/bin/cat "$spool/output.path" 2>/dev/null)"
-        [ -n "$_out" ] || return 0
-        # Write atomically. Commit LAST_RESULT_SIG only after acting (success OR a surfaced error),
-        # never before the write - otherwise a write failure is silently masked by reflect_ui's
-        # independent "Ready" and the user believes a file was saved that was not.
-        /bin/cat "$spool/result.txt" > "$_out.part.$$" 2>/dev/null && /bin/mv "$_out.part.$$" "$_out" 2>/dev/null
-        local _write_rc=$?
-        if [ "$_write_rc" -eq 0 ]; then
-            LAST_RESULT_SIG="$_rsig"
-            "$dialog" "$window_uuid" "$QL_OUTPUT" "$_out"
-            enable_ctrl "$REVEAL_OUTPUT_BTN"
-        else
-            /bin/rm -f "$_out.part.$$"
-            LAST_RESULT_SIG="$_rsig"
-            set_status "Could not write the translation to $_out"
-        fi
+        # The write, the Output field, the forced preview reload and Reveal all live in
+        # deliver_doc_result (lib.interp.sh), where a test can reach them without running this
+        # loop. Commit LAST_RESULT_SIG only after it ACTED - on a successful write or a surfaced
+        # error, never on "no destination recorded", and never before the write. Otherwise a
+        # failure is silently masked by reflect_ui's independent "Ready" and the user believes a
+        # file was saved that was not. Leaving the signature uncommitted on rc 2 means this retries
+        # every tick for as long as the window is open: two reads a second, and the alternative -
+        # marking an undelivered result delivered - is worse. Only a fresh dispatch can change it.
+        deliver_doc_result "$spool"
+        [ $? -eq 2 ] || LAST_RESULT_SIG="$_rsig"
         return 0
     fi
 

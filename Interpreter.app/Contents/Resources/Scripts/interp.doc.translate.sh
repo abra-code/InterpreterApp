@@ -26,11 +26,9 @@ fi
 /bin/mkdir "$spool/dispatch.lock" 2>/dev/null || exit 0
 trap '/bin/rmdir "$spool/dispatch.lock" 2>/dev/null' EXIT
 
-# Snappy UI transition (the poller also does this once it observes "mapping"). The prior output is
-# about to be superseded, so its Reveal affordance no longer points at the current translation.
+# Snappy UI transition (the poller also does this once it observes "mapping").
 disable_ctrl "$TRANSLATE_BTN"
 enable_ctrl "$STOP_BTN"
-disable_ctrl "$REVEAL_OUTPUT_BTN"
 
 # Resolve the picker indices (1-based) to language codes; a stale/bogus index is surfaced.
 src_code=$(resolve_lang_code "$spool" "$from_idx")
@@ -40,6 +38,28 @@ if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     set_status "Please choose valid From and To languages."
     exit 0
 fi
+
+# The output is named after the language it will be in, so settle the destination against the
+# language actually being dispatched (the picker can also have been set programmatically, which
+# interp.to.changed deliberately ignores). Capture it for THIS job: a To change made while the
+# translation is in flight moves the default name for the NEXT run, and must not silently
+# retarget the write the poller is about to make.
+# set_doc_output, not refresh_doc_output: the preview is left alone here, so the translation being
+# replaced stays on screen while its replacement is made, rather than blinking out at dispatch.
+#
+# Guarded rather than fired and forgotten: the redirect truncates job.output.path BEFORE the
+# producer runs, so a settle that printed nothing would leave an empty capture and send the poller
+# back to output.path - the PREVIOUS run's destination, which it would then overwrite. Both inputs
+# are validated above, so this cannot fire today; it is written so that it cannot start to.
+if ! set_doc_output "$spool" "$tgt_code" > "$spool/job.output.path"; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "Could not decide where to save the translation."
+    exit 0
+fi
+
+# The prior output is about to be superseded, so its Reveal affordance no longer points at the
+# current translation.
+disable_ctrl "$REVEAL_OUTPUT_BTN"
 
 # Convert the document to plain text. convert_to_plain_text judges real readability (textutil's own
 # exit status lies - it returns 0 for an unreadable .pages/other package while writing nothing), so

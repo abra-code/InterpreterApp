@@ -83,6 +83,9 @@
       "NAME": "Interpreter",
       "COMMAND_ID": "interp.doc.choose.output",
       "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_21_VALUE": ""
+      },
       "SAVE_AS_DIALOG": {
         "MESSAGE": "Save the translation as",
         "ALLOWED_CONTENT_TYPES": ["public.plain-text"]
