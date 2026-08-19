@@ -448,6 +448,13 @@ ui_hygiene_check() {
             }')"
     check "no bare value write clobbered a table" "" "$(ui_suspect_writes)"
     check "the harness detected no misuse" "" "$(ui_errors)"
+    # Forget what was just judged. Since omctest API 4 the diagnostic logs survive ui_reset -
+    # which is right for a suite whose closing check is meant to cover the whole file, and wrong
+    # for THIS one: the card-id exclusion above is bounded by how many cards exist RIGHT NOW, so
+    # a legitimate write to card row 2 stays in the log into a later section whose curated list
+    # is shorter, and is then reported as undeclared. Clearing here restores what the comment
+    # above already claims - every section covered by exactly one check.
+    ui_reset_diagnostics
 }
 
 # ---------------------------------------------------------------------------
