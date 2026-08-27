@@ -26,7 +26,8 @@ DO_CODESIGN="yes"
 # mlx-agent map openai backend was verified against. Updating the pin means re-checking the
 # /tokenize + /completion field names that backend relies on.
 DO_LLAMA="no"
-LLAMA_VERSION="b10056"
+LLAMA_VERSION_PIN="b10056"
+LLAMA_VERSION="$LLAMA_VERSION_PIN"
 
 SCRIPT_DIR="$(cd "$(/usr/bin/dirname "$0")" >/dev/null 2>&1 && pwd)"
 AGENT_REPO="${MLX_AGENT_REPO:-}"
@@ -44,7 +45,12 @@ while [ $# -gt 0 ]; do
         --with-llama) DO_LLAMA="yes" ;;
         --llama-version=*) DO_LLAMA="yes"; LLAMA_VERSION="${1#*=}" ;;
         --help)
-            echo "Usage: $0 [--release] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--identity=CERT] [--no-codesign] [--with-llama] [--llama-version=bNNNN]"
+            echo "Usage: $0 [--release] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--identity=CERT] [--no-codesign] [--with-llama] [--llama-version=bNNNN|latest|nightly]"
+            echo "  --llama-version  implies --with-llama. Takes:"
+            echo "                   bNNNN    an explicit llama.cpp build tag"
+            echo "                   latest   upstream's newest official release (vX.Y.Z, resolved to its build)"
+            echo "                   nightly  upstream's newest build, released or not"
+            echo "                   default: $LLAMA_VERSION_PIN, the build the map openai backend was verified against"
             exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -200,9 +206,110 @@ fi
 # Prebuilt upstream release tarball -> Contents/Support/Llama.cpp/ (llama-server + dylibs,
 # @rpath-linked so they only need to sit together). Same provisioning as AIChat V2, but pinned:
 # the map openai backend's wire mapping was verified against this build.
+#
+# --llama-version=latest resolves upstream's newest official release instead. The pin stays
+# the default deliberately: moving off it means re-checking the /tokenize + /completion field
+# names the map openai backend reads, so it has to be an explicit act, never a silent one.
+#
+# llama.cpp changed its release scheme in August 2026. The macOS binaries still ship on the
+# bNNNN build tags under unchanged asset names, but those tags are now all marked prerelease,
+# and /releases/latest resolves to an official semver release (v0.3.0 as of this writing)
+# whose only asset is nightly-tag.txt, naming the build the release was cut from. Reading a
+# bNNNN tag straight off /releases/latest therefore matches nothing; resolving "latest" is now
+# two hops. We follow the official release rather than the head of the build list, and never
+# silently fall back from one to the other: an unresolvable release is an error the caller has
+# to answer, because quietly installing the newest untagged build is exactly the behavior the
+# official releases exist to end. --llama-version=nightly opts into that head build.
+
+# Echoes the tag_name of the newest official (non-prerelease) release, or nothing.
+latest_release_tag() {
+    local _json="$(/usr/bin/curl -s --fail --max-time 10 \
+        "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" 2>/dev/null)"
+    # grep -o emits its matches in document order, so head -1 is the first tag_name in the
+    # document whether or not the JSON is pretty-printed. A greedy sed would instead collapse
+    # a minified (single-line) document down to its LAST occurrence.
+    local _tag="$(echo "$_json" \
+        | /usr/bin/grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | /usr/bin/head -1 | /usr/bin/sed -E 's/.*"([^"]+)"$/\1/')"
+    if [ -n "$_tag" ]; then
+        echo "$_tag"
+        return 0
+    fi
+
+    # API unreachable or rate-limited (60 anonymous requests/hour): read the tag out of the
+    # /releases/latest redirect instead, which is not rate-limited.
+    local _redirect="$(/usr/bin/curl -s -I -o /dev/null -w '%{redirect_url}' --max-time 10 \
+        "https://github.com/ggml-org/llama.cpp/releases/latest" 2>/dev/null)"
+    echo "$_redirect" | /usr/bin/sed -n -E 's#.*/releases/tag/([^/?\#[:space:]]+)$#\1#p'
+}
+
+# Echoes the bNNNN build tag an official release points at, or nothing. $1 = release tag.
+nightly_tag_of_release() {
+    local _txt="$(/usr/bin/curl -sL --fail --max-time 10 \
+        "https://github.com/ggml-org/llama.cpp/releases/download/$1/nightly-tag.txt" 2>/dev/null)"
+    echo "$_txt" | /usr/bin/tr -d '[:space:]' | /usr/bin/grep -oE '^b[0-9]+$'
+}
+
+# Echoes the newest bNNNN tag in the releases list (build tags are prereleases now, so the
+# list is the only place they appear). The list is newest-first.
+newest_build_tag() {
+    local _json="$(/usr/bin/curl -s --fail --max-time 15 \
+        "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30" 2>/dev/null)"
+    # Document order via grep -o, as in latest_release_tag: with a greedy sed, a minified
+    # response would silently yield the OLDEST build in the page instead of the newest.
+    echo "$_json" \
+        | /usr/bin/grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"b[0-9]+"' \
+        | /usr/bin/head -1 | /usr/bin/grep -oE 'b[0-9]+'
+}
+
+# Replaces a LLAMA_VERSION of "latest" or "nightly" with the bNNNN build tag it resolves to.
+resolve_llama_version() {
+    local _tag
+    if [ "$LLAMA_VERSION" = "nightly" ]; then
+        echo "  Detecting newest llama.cpp build..."
+        _tag="$(newest_build_tag)"
+        [ -n "$_tag" ] \
+            || fail "No bNNNN tag in the llama.cpp releases list - github.com unreachable, or the API rate-limited this host. Pass --llama-version=bNNNN explicitly."
+        LLAMA_VERSION="$_tag"
+        echo "    newest build: $LLAMA_VERSION"
+        return 0
+    fi
+
+    echo "  Detecting latest llama.cpp release..."
+    local _release="$(latest_release_tag)"
+    [ -n "$_release" ] \
+        || fail "Could not read a tag from github.com/ggml-org/llama.cpp/releases/latest - unreachable, or the API rate-limited this host. Pass --llama-version=bNNNN explicitly."
+
+    case "$_release" in
+        b|b*[!0-9]*)
+            # b-prefixed but not a bare build number (say b10-rc1): a release tag, not a
+            # build tag. Fall through to the nightly-tag.txt hop rather than build a URL.
+            ;;
+        b[0-9]*)
+            # Upstream tagging official releases bNNNN directly (the pre-v0.1.2 scheme).
+            LLAMA_VERSION="$_release"
+            echo "    latest release: $LLAMA_VERSION"
+            return 0
+            ;;
+    esac
+
+    _tag="$(nightly_tag_of_release "$_release")"
+    [ -n "$_tag" ] \
+        || fail "Release $_release has no readable nightly-tag.txt, so the build tag carrying the macOS binaries is unknown - the release scheme has changed again. Check https://github.com/ggml-org/llama.cpp/releases and pass --llama-version=bNNNN, or --llama-version=nightly for the newest build."
+    LLAMA_VERSION="$_tag"
+    echo "    latest release $_release -> build $LLAMA_VERSION"
+}
+
 LLAMA_DIR="$APP_BUNDLE/Contents/Support/Llama.cpp"
 if [ "$DO_LLAMA" = "yes" ]; then
-    case "$LLAMA_VERSION" in b[0-9]*) ;; *) fail "Invalid --llama-version: $LLAMA_VERSION (expected bNNNN)" ;; esac
+    case "$LLAMA_VERSION" in
+        latest|nightly) resolve_llama_version ;;
+    esac
+    case "$LLAMA_VERSION" in b[0-9]*) ;; *) fail "Invalid --llama-version: $LLAMA_VERSION (expected latest, nightly, or a build tag bNNNN)" ;; esac
+    # Off the pin: say so once, here, rather than leaving it to be discovered as a wire-format
+    # mismatch at runtime.
+    [ "$LLAMA_VERSION" = "$LLAMA_VERSION_PIN" ] \
+        || echo "  ${YELLOW}llama.cpp $LLAMA_VERSION is not the pinned $LLAMA_VERSION_PIN - re-check the /tokenize + /completion field names the map openai backend reads.${RESET}"
     case "$ARCH" in arm64) _lasset="llama-${LLAMA_VERSION}-bin-macos-arm64.tar.gz" ;;
                     *)     _lasset="llama-${LLAMA_VERSION}-bin-macos-x64.tar.gz" ;; esac
     _lwork="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/update-interp-llama.XXXXXX")" || fail "mktemp failed"
