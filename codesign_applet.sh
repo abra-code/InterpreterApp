@@ -325,7 +325,7 @@ _is_nested_loose_file() {
 # evaluates every nested item against its policy rules, and an ad-hoc signature
 # has no certificate chain to match one with. The assessment then fails with a
 # bare "rejected" and syspolicyd logs "rejecting due to lack of matching active
-# rule" - once per such file. See Private/Design-nested-code-signing.md.
+# rule" - once per such file.
 list_nested_loose_files() {
     local file_path
     /usr/bin/find "$app_to_sign" -type f ! -path "*/_CodeSignature/*" -print \
@@ -490,12 +490,12 @@ if test -z "$identity" || test "$identity" = "-"; then
     identity="-"
     timestamp="--timestamp=none"
     sign_options=""
-    # Ad-hoc signing has never applied entitlements to anything, discovered or
-    # otherwise. The invariant used to be implicit - the --entitlements flag was
+    # Ad-hoc signing applies no discovered or passed entitlements to the outer
+    # bundle. The invariant used to be implicit - the --entitlements flag was
     # only ever assembled inside the else branch below - so clear the file here
-    # to keep it true now that the flag is built at the call site. The nested
-    # entitlements cache is skipped for the same reason, so ad-hoc runs stay
-    # byte-for-byte equivalent to what this script has always done.
+    # to keep it true now that the flag is built at the call site. Nested code is
+    # different: it keeps entitlements its existing ad-hoc signature already
+    # carried (see the signature cache below).
     entitlements_file=""
 else
     if [ -n "$entitlements_file" ]; then
@@ -557,12 +557,25 @@ nested_loose_files=$(list_nested_loose_files)
 macho_files=$(list_macho_files)
 nested_bundles=$(list_nested_bundles)
 
-# ---- Entitlements cache --------------------------------------------------
+# ---- Signature cache (entitlements and identifiers) ----------------------
 #
 # Signing replaces a signature rather than amending it, so every nested helper,
 # framework and XPC service re-signed below would otherwise come out stripped of
 # whatever entitlements it carried - a JIT-using helper silently losing
 # allow-jit, correctly signed and notarized, crashing the first time it runs.
+#
+# The same goes for a loose Mach-O file's signing identifier. codesign takes a
+# bundle's identifier from its Info.plist, but a plain executable without an
+# embedded Info.plist gets a generated one (tool-555549...) unless told, so a
+# helper built as com.example.tool would lose that name - and with it every
+# grant made to it by designated requirement: Full Disk Access and other
+# privacy permissions, keychain access.
+#
+# Ad-hoc runs keep entitlements only where the existing signature is itself
+# ad-hoc: those are proven to launch without a certificate. Entitlements from a
+# real certificate can include restricted ones that an ad-hoc signature cannot
+# carry, and macOS would kill the re-signed binary at launch - so those are
+# dropped, as ad-hoc runs always did. Identifiers are kept in every mode.
 #
 # The whole cache has to be built before any signing starts: phase 2 rewrites
 # nested bundles' main executables before phase 3 reaches the bundles
@@ -579,12 +592,74 @@ trap '/bin/rm -rf "$ent_cache_dir"; exit 130' INT
 trap '/bin/rm -rf "$ent_cache_dir"; exit 131' QUIT
 trap '/bin/rm -rf "$ent_cache_dir"; exit 143' TERM
 
-cache_entitlements() {
+# Take out of a cached entitlements file what Xcode adds to every plain build
+# (xcodebuild build, in any configuration; only an archive leaves it out):
+# com.apple.security.get-task-allow, which lets a debugger attach, and the empty
+# com.apple.application-identifier that comes with it. The notary service
+# refuses a program that asks for the first, so a helper built that way and
+# carried over faithfully would fail the whole submission. Only for a signing
+# with a certificate: an ad-hoc run leaves a development build debuggable.
+# Arguments: entitlements_file, path (for the message)
+drop_debug_entitlements() {
+    local debug_key="com.apple.security.get-task-allow"
+    /usr/libexec/PlistBuddy -c "Delete :$debug_key" "$1" >/dev/null 2>&1
+    if [ "$?" = "0" ]; then
+        echo "Dropping the debugger entitlement (get-task-allow) from $(/usr/bin/basename "$2"): not allowed in a release"
+    fi
+    local app_id_key="com.apple.application-identifier"
+    local app_id
+    app_id="$(/usr/libexec/PlistBuddy -c "Print :$app_id_key" "$1" 2>/dev/null)"
+    if [ "$?" = "0" ] && [ -z "$app_id" ]; then
+        /usr/libexec/PlistBuddy -c "Delete :$app_id_key" "$1" >/dev/null 2>&1
+    fi
+}
+
+# Record what re-signing a path would otherwise lose: its entitlements (subject to
+# the ad-hoc rule above) and, with a second argument "identifier", its signing
+# identifier unless the linker made it. One codesign call reads both: the
+# entitlements go to stdout, into the cache file, and the signature's details to
+# stderr, captured here.
+# Arguments: path, ["identifier"]
+cache_signature() {
     local target_path="$1"
-    local cache_file="$ent_cache_dir/$(printf '%s' "$target_path" | /sbin/md5 -q).entitlements"
-    /usr/bin/codesign -d --entitlements - --xml "$target_path" > "$cache_file" 2>/dev/null
-    if [ ! -s "$cache_file" ] || ! /usr/bin/grep -q '<key>' "$cache_file"; then
-        /bin/rm -f "$cache_file"
+    local cache_base="$ent_cache_dir/$(printf '%s' "$target_path" | /sbin/md5 -q)"
+    local details="$(/usr/bin/codesign -d -v --entitlements - --xml "$target_path" 2>&1 >"$cache_base.entitlements")"
+    local entitlements_xml="$(/bin/cat "$cache_base.entitlements" 2>/dev/null)"
+    local keep_entitlements="yes"
+    case "$entitlements_xml" in
+        *'<key>'*) ;;
+        *) keep_entitlements="no" ;;
+    esac
+    if [ "$identity" = "-" ]; then
+        case "$details" in
+            *"Signature=adhoc"*) ;;
+            *) keep_entitlements="no" ;;
+        esac
+    fi
+    if [ "$keep_entitlements" = "yes" ] && [ "$identity" != "-" ]; then
+        drop_debug_entitlements "$cache_base.entitlements" "$target_path"
+        entitlements_xml="$(/bin/cat "$cache_base.entitlements" 2>/dev/null)"
+        case "$entitlements_xml" in
+            *'<key>'*) ;;
+            *) keep_entitlements="no" ;;
+        esac
+    fi
+    if [ "$keep_entitlements" != "yes" ]; then
+        /bin/rm -f "$cache_base.entitlements"
+    fi
+    # A linker signature's identifier is only the output file name, chosen by
+    # nobody, and the linker ignores an embedded Info.plist; keeping it would
+    # override the CFBundleIdentifier codesign reads from that plist. Leave those
+    # to codesign, as before.
+    local keep_identifier="${2:-}"
+    case "$details" in
+        *",linker-signed)"*) keep_identifier="no" ;;
+    esac
+    if [ "$keep_identifier" = "identifier" ]; then
+        local identifier="$(printf '%s\n' "$details" | /usr/bin/sed -n 's/^Identifier=//p')"
+        if [ -n "$identifier" ]; then
+            printf '%s' "$identifier" > "$cache_base.identifier"
+        fi
     fi
 }
 
@@ -597,31 +672,46 @@ cached_entitlements() {
     fi
 }
 
-# Sign one nested item, carrying over whatever entitlements it already had.
+# Print the cached signing identifier for a path, or nothing.
+cached_identifier() {
+    local target_path="$1"
+    local cache_file="$ent_cache_dir/$(printf '%s' "$target_path" | /sbin/md5 -q).identifier"
+    if [ -f "$cache_file" ]; then
+        /bin/cat "$cache_file"
+    fi
+}
+
+# Sign one nested item, carrying over the entitlements and identifier the cache
+# kept for it. ${var:+"--identifier=$var"} adds the option, as one word, only
+# when there is an identifier to keep.
 sign_nested() {
     local target_path="$1"
     # Not named entitlements_file: that is the global holding the caller's choice
     # for the outer bundle, which phase 4 applies and this must not shadow.
     local carried_entitlements="$(cached_entitlements "$target_path")"
+    local carried_identifier="$(cached_identifier "$target_path")"
     if [ -n "$carried_entitlements" ]; then
         verbose_echo "  (carrying over entitlements from the existing signature)"
-        run_codesign $cs_verbose --force $sign_options --entitlements "$carried_entitlements" $timestamp --sign "$identity" "$target_path"
+        run_codesign $cs_verbose --force $sign_options --entitlements "$carried_entitlements" $timestamp ${carried_identifier:+"--identifier=$carried_identifier"} --sign "$identity" "$target_path"
     else
-        run_codesign $cs_verbose --force $sign_options $timestamp --sign "$identity" "$target_path"
+        run_codesign $cs_verbose --force $sign_options $timestamp ${carried_identifier:+"--identifier=$carried_identifier"} --sign "$identity" "$target_path"
     fi
 }
 
-# Ad-hoc signing never applied entitlements to anything, so leaving the cache
-# empty keeps that path behaving exactly as it always has - cached_entitlements
-# finds nothing and every sign_nested call takes the plain branch.
-if [ "$identity" != "-" ]; then
-    # Read line by line rather than word-splitting: bundle paths contain spaces.
-    printf '%s\n%s\n' "$macho_files" "$(list_signed_bundles)" \
-        | while IFS= read -r cache_path; do
-            [ -n "$cache_path" ] || continue
-            cache_entitlements "$cache_path"
-        done
-fi
+# Built in every mode (the ad-hoc rule lives in cache_signature). Identifiers
+# only for loose Mach-O files: a bundle's comes from its Info.plist, and
+# forcing an old one onto it would override a change made there on purpose.
+# Read line by line rather than word-splitting: bundle paths contain spaces.
+printf '%s\n' "$macho_files" \
+    | while IFS= read -r cache_path; do
+        [ -n "$cache_path" ] || continue
+        cache_signature "$cache_path" identifier
+    done
+list_signed_bundles \
+    | while IFS= read -r cache_path; do
+        [ -n "$cache_path" ] || continue
+        cache_signature "$cache_path"
+    done
 
 # ---- Phase 1: sign loose non-Mach-O files in nested (code) locations ------
 #
