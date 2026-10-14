@@ -1,0 +1,17 @@
+{
+  "id": "humanize",
+  "name": "Humanize",
+  "family": "humanizer",
+  "button": "Rewrite",
+  "languages": ["en", "zh"],
+  "notice": "Rewrites English or Chinese text so it reads as written by a person. Each run gives a different version. It can change numbers, dates and names, so proofread the result.",
+  "output_suffix": "humanized",
+  "server": { "ctx_size": 8192, "top_k": 0, "min_p": 0 },
+  "sampling": { "temperature": 1.0, "top_p": 0.95, "max_new_tokens": 2048 },
+  "job": {
+    "output": "stitch",
+    "budget_tokens": 400,
+    "add_special_tokens": true,
+    "prompt": "Rewrite the text below so it reads like a person wrote it, not a language model.\n\nReorganize it as you see fit. Vary sentence length on purpose. Cut hedging,\nthroat-clearing, and any sentence that only announces what comes next.\nPrefer the concrete word over the abstract one. It is fine to sound uneven.\n\nEvery fact, number, unit, date, name and quotation must survive unchanged.\n\n{{chunk}}\n\n### Rewritten:\n\n"
+  }
+}

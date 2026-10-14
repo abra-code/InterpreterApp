@@ -19,6 +19,10 @@
 __INTERP_MODELS_LIB=1
 
 INTERP_CATALOG_TSV="$OMC_APP_BUNDLE_PATH/Contents/Resources/models.catalog.tsv"
+# Sourced after the kind was applied (lib.interp.sh does it for chooser handlers): keep the
+# transform catalog interp_apply_kind chose instead of resetting it to the translation one.
+[ "${INTERP_KIND:-translate}" = transform ] \
+    && INTERP_CATALOG_TSV="${INTERP_TRANSFORM_CATALOG_TSV:-$OMC_APP_BUNDLE_PATH/Contents/Resources/models.transform.catalog.tsv}"
 
 # The two substitutable binaries this library reaches for. Every handler sources
 # lib.interp.sh first, which already defines both to the same thing; they are
@@ -33,7 +37,7 @@ machine_ram_bytes() { "$sysctl_tool" -n hw.memsize 2>/dev/null; }
 bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf "%.1f GB", b/1000000000 }'; }
 
 # Human name of a model family (catalog `family` column value -> display string).
-family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; hymt) echo "Hy-MT2";; *) echo "$1";; esac; }
+family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; hymt) echo "Hy-MT2";; humanizer) echo "Humanizer";; gohumanize) echo "GoHumanize";; *) echo "$1";; esac; }
 
 # One-sentence model-specific guidance for a family, shown on every curated card (prepended to
 # the section rationale) and in the info sheet, so a user can pick BETWEEN families, not just
@@ -45,6 +49,8 @@ family_blurb() {   # $1 = family
         translategemma) echo "Google's all-round translator: every app language, strongest European coverage." ;;
         milmmt)         echo "Xiaomi's translator: matches TranslateGemma on European languages, but fewer languages." ;;
         hymt)           echo "Tencent's translator: the top pick for Chinese and Japanese; for European languages prefer the other families." ;;
+        humanizer)      echo "Rewrites English or Chinese AI-sounding drafts to read as written by a person, keeping the facts." ;;
+        gohumanize)     echo "A small, fast English-only rewriter for AI-sounding drafts; leaves more text unchanged." ;;
         *)              echo "" ;;
     esac
 }

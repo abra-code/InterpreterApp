@@ -62,12 +62,13 @@ omctest_import_view_ids() { # <script ...>
             -e 's/^\([A-Z][A-Z0-9_]*\)=\([0-9][0-9]*\)$/\1=\2/p' "$script")"
     done
 }
-omctest_import_view_ids "$APP_SCRIPTS/lib.interp.sh"
+omctest_import_view_ids "$APP_SCRIPTS/lib.interp.sh" "$APP_SCRIPTS/lib.interp.transform.sh"
 
 for _required in MODEL_PICKER FROM_PICKER TO_PICKER SWAP_BTN TRANSLATE_BTN \
                  STOP_BTN SRC_EDITOR TGT_EDITOR CHAR_TEXT STATUS_TEXT \
                  QL_INPUT QL_OUTPUT INPUT_PATH_TEXT OUTPUT_PATH_TEXT \
-                 CHOOSE_OUTPUT_BTN REVEAL_OUTPUT_BTN; do
+                 CHOOSE_OUTPUT_BTN REVEAL_OUTPUT_BTN \
+                 PRESET_PICKER NOTICE_TEXT CHECK_TEXT; do
     eval "_value=\${$_required-}"
     if [ -z "$_value" ]; then
         printf 'lib.test.interp: %s did not import from lib.interp.sh\n' "$_required" >&2
@@ -247,6 +248,10 @@ models_dir()   { printf '%s/Models' "$INTERP_APP_SUPPORT"; }
 sessions_dir() { printf '%s/Sessions' "$INTERP_APP_SUPPORT"; }
 cache_dir()    { printf '%s/Cache' "$INTERP_APP_SUPPORT"; }
 downloads_dir(){ printf '%s/Downloads' "$INTERP_APP_SUPPORT"; }
+# The text transformer library (kind "transform"): its own models, cache and downloads.
+transforms_dir()          { printf '%s/Transformers' "$INTERP_APP_SUPPORT"; }
+transform_cache_dir()     { printf '%s/Cache/Transformers' "$INTERP_APP_SUPPORT"; }
+transform_downloads_dir() { printf '%s/Downloads/Transformers' "$INTERP_APP_SUPPORT"; }
 
 # lib.interp.sh: spool_dir_for() is "$SESSIONS_DIR/$window_uuid" - a plain
 # concatenation with no TMPDIR in it, so there is no trailing-slash hazard here.
@@ -257,6 +262,9 @@ spool_dir() { printf '%s/%s' "$(sessions_dir)" "$OMC_ACTIONUI_WINDOW_UUID"; }
 
 # The chooser window's marker directory, which bounds its poller's lifetime.
 chooser_marker() { printf '%s/.chooser.%s' "$(downloads_dir)" "$OMC_ACTIONUI_WINDOW_UUID"; }
+# A transform chooser's marker lives under the transform downloads dir - which is also how the
+# applet tells the two kinds of chooser apart.
+transform_chooser_marker() { printf '%s/.chooser.%s' "$(transform_downloads_dir)" "$OMC_ACTIONUI_WINDOW_UUID"; }
 
 spool_file() { /bin/cat "$(spool_dir)/$1" 2>/dev/null; }
 
@@ -322,6 +330,7 @@ pb_set() { "$OMC_OMC_SUPPORT_PATH/pasteboard" "$1" set "$2"; }
 
 doc_handoff()     { pb_get "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH"; }
 service_handoff() { pb_get "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE"; }
+transform_service_handoff() { pb_get "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE"; }
 
 # ---------------------------------------------------------------------------
 # Calling into the applet's libraries
@@ -337,6 +346,16 @@ interp_call() { # <function> [argument ...]
     (
         . "$APP_SCRIPTS/lib.interp.sh" >/dev/null 2>&1
         . "$APP_SCRIPTS/lib.interp.models.sh" >/dev/null 2>&1
+        "$@"
+    )
+}
+
+# The same, with the transform library loaded too.
+interp_tcall() { # <function> [argument ...]
+    (
+        . "$APP_SCRIPTS/lib.interp.sh" >/dev/null 2>&1
+        . "$APP_SCRIPTS/lib.interp.models.sh" >/dev/null 2>&1
+        . "$APP_SCRIPTS/lib.interp.transform.sh" >/dev/null 2>&1
         "$@"
     )
 }
@@ -404,6 +423,17 @@ make_empty_model_dir() { # <dir-name> -> prints the path
     printf '%s' "$dir"
 }
 
+# An installed text transformer: a directory under Transformers/ holding a .gguf. Its NAME decides
+# its family, through models.transform.catalog.tsv - a name the catalog does not list belongs to
+# no family and is offered to no preset.
+make_transform_model() { # <install-name> -> prints the path
+    local dir="$(transforms_dir)/$1"
+    /bin/rm -rf "$dir"
+    /bin/mkdir -p "$dir"
+    printf 'GGUF\n' > "$dir/model-Q8_0.gguf"
+    printf '%s' "$dir"
+}
+
 make_text_file() { # <name> <contents> -> prints the path
     local file="$OMCTEST_WORK/$1"
     printf '%s' "$2" > "$file"
@@ -432,11 +462,11 @@ make_text_file() { # <name> <contents> -> prints the path
 # builds them from. Used to bound the id exclusion above to rows that really
 # exist, rather than blanking the whole 2000-2999 range.
 card_rows() {
-    if [ -f "$(cache_dir)/curated.tsv" ]; then
-        /usr/bin/grep -c '' "$(cache_dir)/curated.tsv"
-    else
-        printf '0'
-    fi
+    local a=0 b=0
+    [ -f "$(cache_dir)/curated.tsv" ] && a="$(/usr/bin/grep -c '' "$(cache_dir)/curated.tsv")"
+    # A transform chooser builds its cards from its own cache.
+    [ -f "$(transform_cache_dir)/curated.tsv" ] && b="$(/usr/bin/grep -c '' "$(transform_cache_dir)/curated.tsv")"
+    if [ "$a" -ge "$b" ]; then printf '%s' "$a"; else printf '%s' "$b"; fi
 }
 
 ui_hygiene_check() {
@@ -481,6 +511,7 @@ reset_document() {
     /bin/mkdir -p "$(models_dir)" "$(sessions_dir)" "$(cache_dir)" "$(downloads_dir)"
     pb_set "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE" ""
+    pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE" ""
     pb_set "interp_epoch_${OMC_ACTIONUI_WINDOW_UUID}" ""
     fakes_reset
     omc_object ""
@@ -496,9 +527,10 @@ reset_document() {
 # assert had survived, and the check would read as a bug in the applet.
 reset_window() {
     ui_hygiene_check
-    /bin/rm -rf "$(spool_dir)" "$(chooser_marker)"
+    /bin/rm -rf "$(spool_dir)" "$(chooser_marker)" "$(transform_chooser_marker)"
     pb_set "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE" ""
+    pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE" ""
     pb_set "interp_epoch_${OMC_ACTIONUI_WINDOW_UUID}" ""
     ui_reset
     alerts_reset

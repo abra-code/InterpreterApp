@@ -62,6 +62,30 @@ SESSIONS_DIR="$APP_SUPPORT/Sessions"
 CACHE_DIR="$APP_SUPPORT/Cache"
 DOWNLOADS_DIR="$APP_SUPPORT/Downloads"
 
+# The model chooser serves two KINDS of model library: translate (the paths above, the default)
+# and transform (text transformers - Transformers/, its own cache, downloads and catalog). The
+# chooser scripts are shared; interp_apply_kind rebinds the four library variables once, right
+# after sourcing, and everything downstream follows. A chooser window's kind is recorded by WHERE
+# its marker dir lives: a transform chooser's ".chooser.<uuid>" is under TRANSFORM_DOWNLOADS_DIR.
+# That keeps deletion safe by construction - interp.models.delete stashes the pending model in the
+# marker dir, so a confirm that resolved the other kind finds no pending file and removes nothing.
+TRANSFORM_DOWNLOADS_DIR="$APP_SUPPORT/Downloads/Transformers"
+INTERP_KIND=translate
+interp_apply_kind() {   # $1 = translate | transform
+    [ "$1" = transform ] || return 0
+    INTERP_KIND=transform
+    MODELS_DIR="$APP_SUPPORT/Transformers"
+    CACHE_DIR="$APP_SUPPORT/Cache/Transformers"
+    DOWNLOADS_DIR="$TRANSFORM_DOWNLOADS_DIR"
+    INTERP_CATALOG_TSV="${INTERP_TRANSFORM_CATALOG_TSV:-$OMC_APP_BUNDLE_PATH/Contents/Resources/models.transform.catalog.tsv}"
+}
+# Apply the kind of the chooser window $1 (default: this handler's window).
+interp_apply_window_kind() {   # [$1 = window uuid]
+    local _uuid="${1:-$window_uuid}"
+    [ -n "$_uuid" ] && [ -d "$TRANSFORM_DOWNLOADS_DIR/.chooser.$_uuid" ] && interp_apply_kind transform
+    return 0
+}
+
 # ActionUI control ids (must match interpreter.window.json).
 MODEL_PICKER=25
 FROM_PICKER=20
@@ -108,6 +132,7 @@ pb_get() { "$pasteboard" "$1" get 2>/dev/null; }
 PB_PREFIX="${INTERP_PB_PREFIX:-}"
 PB_DOC_INPUT="${PB_PREFIX}INTERP_DOC_INPUT_PATH"
 PB_SERVICE_TEXT="${PB_PREFIX}INTERP_SERVICE_TEXT_FILE"
+PB_SERVICE_TRANSFORM_TEXT="${PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE"
 
 # Open the document-translation window for a file: stash the path on the private handoff key that
 # interp.doc.init consumes, then chain to the doc window. Shared by the launch/drop dispatcher,
@@ -248,7 +273,7 @@ model_display_label() {   # $1 = model dir path
 #          so this function returns immediately either way and the poller's UI flow is identical
 #          for both engines. The server's lifetime is tied to the broker's by a watchdog.
 spawn_broker() {   # $1 = spool dir, $2 = model dir
-    local _gguf _port _bpid _lpid
+    local _gguf _port _bpid
     if [ "$(model_engine_of "$2")" = gguf ]; then
         _gguf=$(gguf_file_in "$2")
         if [ -z "$_gguf" ] || [ ! -x "$LLAMA_SERVER_BIN" ]; then
@@ -265,17 +290,7 @@ spawn_broker() {   # $1 = spool dir, $2 = model dir
             --temperature "$GEN_TEMP" --max-new-tokens "$GEN_MAXTOK" \
             < /dev/null >> "$1/agent.log" 2>&1 &
         _bpid=$!
-        # Watchdog: when the broker dies - model switch, app quit, spool reaped - take the
-        # server with it, whatever the death path was. Checks every 2s; the tiny subshell holds
-        # no window state. The server pid VALUE is captured NOW: the common broker-death cause
-        # is the spool being deleted on window close, so reading llama.pid after the death
-        # would find nothing and leak the server. The pid is re-verified by argv before the
-        # kill (kill_llama_pid) so a recycled pid is never signalled.
-        _lpid=$(/bin/cat "$1/llama.pid" 2>/dev/null)
-        (
-            while /bin/kill -0 "$_bpid" 2>/dev/null; do /bin/sleep 2; done
-            kill_llama_pid "$_lpid"
-        ) < /dev/null > /dev/null 2>&1 &
+        tie_llama_to_broker "$1" "$_bpid"
         echo "$_bpid"
         return 0
     fi
@@ -291,8 +306,25 @@ spawn_broker() {   # $1 = spool dir, $2 = model dir
     echo $!
 }
 
+# Watchdog: when the broker dies - model switch, app quit, spool reaped - take the llama-server
+# with it, whatever the death path was. Checks every 2s; the tiny subshell holds no window state.
+# The server pid VALUE is captured NOW: the common broker-death cause is the spool being deleted
+# on window close, so reading llama.pid after the death would find nothing and leak the server.
+# The pid is re-verified by argv before the kill (kill_llama_pid) so a recycled pid is never
+# signalled.
+tie_llama_to_broker() {   # $1 = spool dir, $2 = broker pid
+    local _bpid="$2"
+    local _lpid="$(/bin/cat "$1/llama.pid" 2>/dev/null)"
+    (
+        while /bin/kill -0 "$_bpid" 2>/dev/null; do /bin/sleep 2; done
+        kill_llama_pid "$_lpid"
+    ) < /dev/null > /dev/null 2>&1 &
+}
+
 # Launch the bundled llama-server for a .gguf on a free localhost port. Prints the port (and
 # records llama.pid/llama.port in the spool); returns 1 without printing when no port bound.
+# Arguments after the gguf are extra server flags (a transformer preset's sampling defaults and
+# context size), appended after the standard ones so they win.
 # Any stale server recorded in this spool is retired FIRST and waited on, so a model switch
 # never holds two ggufs in memory (mirrors ensure_broker's wait for the old MLX broker).
 #
@@ -301,8 +333,9 @@ spawn_broker() {   # $1 = spool dir, $2 = model dir
 # memory at negligible quality cost; --sleep-idle-seconds matches the MLX engine's idle-unload
 # policy. Memory fitting is left to llama-server's own --fit default - Interpreter runs one
 # model per window, not a fleet, so AIChat's sibling-aware budget is not needed.
-spawn_llama_server() {   # $1 = spool dir, $2 = gguf file ; prints the port
+spawn_llama_server() {   # $1 = spool dir, $2 = gguf file, [$3...] = extra flags ; prints the port
     local _spool="$1" _gguf="$2" _old _port _p _w _spid
+    shift 2
     _old=$(/bin/cat "$_spool/llama.pid" 2>/dev/null)
     if [ -n "$_old" ]; then
         kill_llama_pid "$_old"
@@ -316,7 +349,7 @@ spawn_llama_server() {   # $1 = spool dir, $2 = gguf file ; prints the port
     done
     [ -n "$_port" ] || return 1
     "$LLAMA_SERVER_BIN" --host 127.0.0.1 --port "$_port" --model "$_gguf" --jinja \
-        --cache-type-k q8_0 --cache-type-v q8_0 --sleep-idle-seconds 600 \
+        --cache-type-k q8_0 --cache-type-v q8_0 --sleep-idle-seconds 600 "$@" \
         < /dev/null >> "$_spool/llama.log" 2>&1 &
     _spid=$!
     /usr/bin/printf '%s' "$_spid"  > "$_spool/llama.pid"
@@ -830,3 +863,8 @@ deliver_doc_result() {   # $1 = spool
     set_status "Could not write the translation to $_out"
     return 1
 }
+
+# A handler fired from a transform chooser window works on the transform library (see
+# interp_apply_kind). Background scripts that receive their window uuid as an argument call
+# interp_apply_window_kind themselves after setting it.
+interp_apply_window_kind

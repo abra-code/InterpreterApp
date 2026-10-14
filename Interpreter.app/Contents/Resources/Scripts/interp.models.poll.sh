@@ -16,6 +16,7 @@ source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.models.sh"
 
 window_uuid="$1"
+interp_apply_window_kind
 marker="$DOWNLOADS_DIR/.chooser.$window_uuid"
 tab=$(/usr/bin/printf '\t')
 

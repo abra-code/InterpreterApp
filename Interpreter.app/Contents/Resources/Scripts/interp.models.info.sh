@@ -27,10 +27,12 @@ EOF
 case "$fam" in
     milmmt) credit="Created by Xiaomi (MiLMMT-46, built on Google Gemma 3)."; build="MLX build" ;;
     hymt)   credit="Created by Tencent (Hy-MT2)."; build="GGUF build (runs on the bundled llama.cpp)" ;;
+    humanizer|gohumanize)
+            credit="Created by $author ($(family_display_name "$fam"))."; build="GGUF build (runs on the bundled llama.cpp)" ;;
     *)      credit="Created by Google (TranslateGemma, built on Gemma 3)."; build="MLX build" ;;
 esac
 case "$fam" in
-    hymt) license="**License:** distributed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0)." ;;
+    hymt|humanizer|gohumanize) license="**License:** distributed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0)." ;;
     *)    license="**License:** provided under and subject to the [Gemma Terms of Use](https://ai.google.dev/gemma/terms). Use is also subject to the [Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy)." ;;
 esac
 

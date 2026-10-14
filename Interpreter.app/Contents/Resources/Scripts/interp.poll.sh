@@ -1,7 +1,7 @@
 # interp.poll.sh - backgrounded UI poller, one per window. Spawned by interp.window.init (text
 # mode) or interp.doc.init (doc mode). Runs until the spool directory disappears (window close /
 # app quit), then exits. Not an OMC command - launched directly via /bin/sh.
-#   args: <window_uuid> <spool_dir> [mode]   mode = text (default) | doc
+#   args: <window_uuid> <spool_dir> [mode]   mode = text (default) | doc | transform
 #
 # This poller OWNS the mlx-agent map broker. Each tick it:
 #   1. syncs the Model picker + a `modelpaths` index to whatever is installed under Models/,
@@ -14,17 +14,62 @@
 # Single ownership here is what lets first-run and model switching work without the init or the
 # switch handler managing broker processes. The two windows share this one poller; only the swap
 # button (text-only) and the result delivery differ by mode.
+#
+# transform mode (the Text Transform window): the model list is the installed transformers of the
+# selected preset's family (spool/preset.file, written by interp.transform.init and
+# interp.transform.preset.changed), the broker is keyed on model AND preset (sampling is per
+# broker process), there are no language pickers, and a finished run gets a fact check
+# (transform_check) shown under the result.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
 window_uuid="$1"       # override the (inherited) uuid with the explicit arg
 spool="$2"
-MODE="${3:-text}"      # text | doc
+MODE="${3:-text}"      # text | doc | transform
+
+if [ "$MODE" = transform ]; then
+    source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
+    VERB_ING="Rewriting"; VERB_PAST="rewritten"
+    SAVED_MODEL_KEY="TransformModelName"
+    NO_MODEL_TEXT="No model for this transform. Choose \"Download models...\" from the Model menu."
+    DOWNLOAD_OPTION="Download models..."
+else
+    VERB_ING="Translating"; VERB_PAST="translated"
+    SAVED_MODEL_KEY="ModelName"
+    NO_MODEL_TEXT="No translation model. Choose \"Download models…\" from the Model menu."
+    DOWNLOAD_OPTION="Download models…"
+fi
+LAST_CHECK_EPOCH=""       # transform mode: epoch whose finished result was already checked
+
+# The installed models this window can pick from, one resolved path per line, and their labels.
+# The transform list carries the preset's family on its first line, so a preset switch to a
+# different family changes the signature sync_models compares and rebuilds the picker.
+window_model_list() {
+    if [ "$MODE" = transform ]; then
+        local _preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
+        local _fam="$(preset_get "$_preset" family)"
+        /usr/bin/printf '#%s\n' "$_fam"
+        list_transform_dirs "$_fam"
+    else
+        list_model_dirs
+    fi
+}
+window_model_label() {   # $1 = model dir
+    if [ "$MODE" = transform ]; then transform_display_label "$1"; else model_display_label "$1"; fi
+}
+# What the running broker must match: the model, plus the preset in transform mode.
+broker_key() {   # $1 = selected model dir
+    if [ "$MODE" = transform ]; then
+        /usr/bin/printf '%s|%s' "$1" "$(/bin/cat "$spool/preset.file" 2>/dev/null)"
+    else
+        /usr/bin/printf '%s' "$1"
+    fi
+}
 
 # The document window has no Swap control; make swap toggles no-ops there so the shared status
 # logic below can call them unconditionally.
-enable_swap()  { [ "$MODE" = doc ] || enable_ctrl "$SWAP_BTN"; }
-disable_swap() { [ "$MODE" = doc ] || disable_ctrl "$SWAP_BTN"; }
+enable_swap()  { [ "$MODE" = text ] && enable_ctrl "$SWAP_BTN"; }
+disable_swap() { [ "$MODE" = text ] && disable_ctrl "$SWAP_BTN"; }
 
 # Cross-tick state (globals, UPPERCASE) mutated by the functions below.
 LAST_MODELS="__unset__"   # signature of the installed-model set (rebuild the picker on change).
@@ -35,7 +80,7 @@ LAST_RESULT_SIG=""        # mtime+size of result.txt
 
 # --- keep the Model picker in sync with what is installed -------------------
 sync_models() {
-    local _list="$(list_model_dirs)"
+    local _list="$(window_model_list)"
     [ "$_list" = "$LAST_MODELS" ] && return 0
     LAST_MODELS="$_list"
 
@@ -45,13 +90,14 @@ sync_models() {
 '
     for _m in $_list; do
         [ -n "$_m" ] || continue
-        _lbl="$(model_display_label "$_m")"
+        case "$_m" in '#'*) continue ;; esac
+        _lbl="$(window_model_label "$_m")"
         if [ "$_first" = 1 ]; then _first=0; else _opts="$_opts,"; fi
         _opts="$_opts\"$_lbl\""
         /usr/bin/printf '%s\n' "$_m" >> "$spool/modelpaths.tmp"
     done
     IFS="$_oldifs"
-    if [ "$_first" = 1 ]; then _opts="$_opts\"Download models…\""; else _opts="$_opts,\"Download models…\""; fi
+    if [ "$_first" = 1 ]; then _opts="$_opts\"$DOWNLOAD_OPTION\""; else _opts="$_opts,\"$DOWNLOAD_OPTION\""; fi
     _opts="$_opts]"
     /bin/mv "$spool/modelpaths.tmp" "$spool/modelpaths"
 
@@ -72,7 +118,7 @@ sync_models() {
     local _sel_known=0
     [ -n "$_sel" ] && /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null && _sel_known=1
     if [ "$_sel_known" = 0 ]; then
-        local _saved="$("$defaults_tool" read "$BUNDLE_ID" ModelName 2>/dev/null)"
+        local _saved="$("$defaults_tool" read "$BUNDLE_ID" "$SAVED_MODEL_KEY" 2>/dev/null)"
         _sel=""
         [ -n "$_saved" ] && _sel="$(/usr/bin/awk -F/ -v n="$_saved" '$NF==n { print; exit }' "$spool/modelpaths" 2>/dev/null)"
         [ -n "$_sel" ] || _sel="$(/usr/bin/head -1 "$spool/modelpaths" 2>/dev/null)"
@@ -97,6 +143,7 @@ sync_models() {
 # so the pickers only offer languages the new model supports. Selections survive by saved code;
 # a code the new family lacks falls back to en/es inside the populate.
 sync_languages() {
+    [ "$MODE" = transform ] && return 0
     local _fam=$(model_family_of "$(/bin/cat "$spool/model.dir" 2>/dev/null)")
     [ "$_fam" = "$(/bin/cat "$spool/langfamily" 2>/dev/null)" ] && return 0
     populate_language_pickers "$spool"
@@ -107,10 +154,24 @@ sync_languages() {
     fi
 }
 
+# Stop this window's broker (its llama-server follows via the watchdog) and clear its state files.
+retire_broker() {
+    [ -f "$spool/broker.pid" ] || return 0
+    local _bpid="$(/bin/cat "$spool/broker.pid" 2>/dev/null)"
+    pid_alive "$_bpid" && kill_broker_pid "$_bpid"
+    /bin/rm -f "$spool/broker.pid" "$spool/broker.model" "$spool/status.json" "$spool/result.txt" \
+               "$spool/job.json" "$spool/translate.start" "$spool/translate.elapsed"
+    LAST_UI_SIG=""
+}
+
 # --- ensure one broker is running for the selected model --------------------
 ensure_broker() {
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
     if [ -z "$_sel" ] || [ ! -d "$_sel" ]; then
+        # Transform mode: a preset switch to a family with nothing installed leaves no selection
+        # while the previous preset's broker is still up and "ready" - retire it, so the window
+        # shows "no model" instead of offering a run on the wrong model.
+        [ "$MODE" = transform ] && retire_broker
         return 0        # no model yet; the UI phase handling reports it
     fi
 
@@ -118,7 +179,7 @@ ensure_broker() {
         local _bpid="$(/bin/cat "$spool/broker.pid" 2>/dev/null)"
         local _bmodel="$(/bin/cat "$spool/broker.model" 2>/dev/null)"
         if pid_alive "$_bpid"; then
-            [ "$_bmodel" = "$_sel" ] && return 0     # correct broker already running
+            [ "$_bmodel" = "$(broker_key "$_sel")" ] && return 0     # correct broker already running
             kill_broker_pid "$_bpid"                 # model switched: retire the old broker
             # Wait for it to release its model weights before loading the new one, so a switch
             # never momentarily holds two models in memory. Escalate to SIGKILL if it does not go
@@ -143,9 +204,14 @@ ensure_broker() {
     fi
 
     disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
-    local _npid="$(spawn_broker "$spool" "$_sel")"
+    local _npid
+    if [ "$MODE" = transform ]; then
+        _npid="$(spawn_transform_broker "$spool" "$_sel" "$(/bin/cat "$spool/preset.file" 2>/dev/null)")"
+    else
+        _npid="$(spawn_broker "$spool" "$_sel")"
+    fi
     /usr/bin/printf '%s' "$_npid" > "$spool/broker.pid"
-    /usr/bin/printf '%s' "$_sel"  > "$spool/broker.model"
+    /usr/bin/printf '%s' "$(broker_key "$_sel")" > "$spool/broker.model"
     LAST_UI_SIG=""      # force a fresh status render for the new broker
 }
 
@@ -165,6 +231,17 @@ reflect_ui() {
     # Synthesize a phase for the pre-status.json window: no model vs. broker warming up.
     if [ -z "$_state" ]; then
         if [ -z "$_sel" ]; then _state="nomodel"; else _state="loading"; fi
+    fi
+    # Transform mode: a preset or model switch turns Rewrite off from its handler, which this
+    # signature cannot see. The handler leaves ui.stale AFTER recording the switch: forget the
+    # signature so the button is re-rendered even when the switch was undone before this tick
+    # (A -> B -> A keeps the same broker, and the button would otherwise stay off). A broker that
+    # does not match the recorded selection yet is about to be respawned - show it as loading, so
+    # Rewrite is never re-enabled against it.
+    if [ "$MODE" = transform ]; then
+        [ -f "$spool/ui.stale" ] && { /bin/rm -f "$spool/ui.stale"; LAST_UI_SIG=""; }
+        [ -n "$_sel" ] && [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" != "$(broker_key "$_sel")" ] \
+            && _state="loading"
     fi
 
     local _sig="$_state|$_chunk|$_total|$_msg|$_tps|$_eta"
@@ -195,7 +272,7 @@ reflect_ui() {
     case "$_state" in
         nomodel)
             disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
-            set_status "No translation model. Choose \"Download models…\" from the Model menu." ;;
+            set_status "$NO_MODEL_TEXT" ;;
         loading)
             disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Loading model…" ;;
@@ -214,9 +291,9 @@ reflect_ui() {
             local _base _tail=""
             if [ "$_tn" -ge 2 ]; then
                 _cur=$(( _cn + 1 )); [ "$_cur" -gt "$_tn" ] && _cur="$_tn"
-                _base="Translating chunk $_cur of $_tn"
+                _base="$VERB_ING chunk $_cur of $_tn"
             else
-                _base="Translating"
+                _base="$VERB_ING"
             fi
             [ -n "$_etaTxt" ] && _tail=" — $_etaTxt"
             [ -n "$_tpsN" ] && _tail="$_tail ($_tpsN tok/s)"
@@ -239,8 +316,8 @@ reflect_ui() {
             fi
             # "Ready (translated in <wall time>, <decode speed>)".
             local _dtail=""
-            if [ -n "$_es" ] && [ -n "$_tpsN" ]; then _dtail=" (translated in $_es, $_tpsN tok/s)"
-            elif [ -n "$_es" ]; then _dtail=" (translated in $_es)"
+            if [ -n "$_es" ] && [ -n "$_tpsN" ]; then _dtail=" ($VERB_PAST in $_es, $_tpsN tok/s)"
+            elif [ -n "$_es" ]; then _dtail=" ($VERB_PAST in $_es)"
             elif [ -n "$_tpsN" ]; then _dtail=" ($_tpsN tok/s)"
             fi
             set_status "Ready$_dtail" ;;
@@ -288,11 +365,29 @@ reflect_result() {
         | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
 }
 
+# Transform mode: once THIS job is done (status epoch matches job.json, the same gate document
+# delivery uses), compare the finished result with its source and show what looks wrong. Runs
+# once per epoch; interp.transform.run clears the line when it dispatches the next job.
+check_result() {
+    [ "$MODE" = transform ] || return 0
+    local _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+    [ "$_st" = done ] || return 0
+    local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
+    local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
+    [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
+    [ "$_ep" = "$LAST_CHECK_EPOCH" ] && return 0
+    [ -f "$spool/result.txt" ] && [ -f "$spool/source.$_ep.txt" ] || return 0
+    LAST_CHECK_EPOCH="$_ep"
+    transform_check "$spool/source.$_ep.txt" "$spool/result.txt" "$spool/check.txt"
+    "$dialog" "$window_uuid" "$CHECK_TEXT" "$(/bin/cat "$spool/check.txt" 2>/dev/null)"
+}
+
 while [ -d "$spool" ]; do
     sync_models
     sync_languages
     ensure_broker
     reflect_ui
     reflect_result
+    check_result
     /bin/sleep 1
 done

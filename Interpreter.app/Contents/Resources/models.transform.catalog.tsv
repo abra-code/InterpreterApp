@@ -1,0 +1,12 @@
+# models.transform.catalog.tsv - the text transformer models the Text Transform chooser offers,
+# best -> smallest WITHIN each family. Same columns and rules as models.catalog.tsv:
+#   family <TAB> hf_author <TAB> install_name <TAB> params_billions <TAB> quant_bits
+#     <TAB> engine <TAB> repo/gguf_file
+# Every row here is a gguf row (transformers run on the bundled llama-server). The install name
+# (column 3) is the directory under Transformers/ and the key the app uses to find a model's
+# family - presets (Resources/Transformers/*.json) name a family, and the window offers the
+# installed variants of that family. The gguf file may sit in a repo subfolder; the download
+# worker moves it to the top of the install directory.
+humanizer	jialinyyzz	humanizer-12B-8bit	12	8	gguf	humanizer-GGUF/humanizer-12b-Q8_0.gguf
+humanizer	jialinyyzz	humanizer-12B-6bit	12	6	gguf	humanizer-GGUF/humanizer-12b-Q6_K.gguf
+humanizer	jialinyyzz	humanizer-12B-4bit	12	4	gguf	humanizer-GGUF/humanizer-12b-Q4_K_M.gguf

@@ -25,7 +25,7 @@ marker="$DOWNLOADS_DIR/.chooser.$window_uuid"
 
 sz=$(/usr/bin/du -sk "$MODELS_DIR/$repo" 2>/dev/null | /usr/bin/awk '{ printf "%.1f GB", $1 * 1024 / 1000000000 }')
 "$dialog" "$window_uuid" omc_window omc_present_alert "Delete $label?" \
-"This removes the model (${sz:-installed}) from your Mac. You can download it again later. If a translation window is using it, it will switch to another installed model." \
+"This removes the model (${sz:-installed}) from your Mac. You can download it again later. If a window is using it, it will switch to another installed model." \
 "Cancel:cancel:" "Delete:destructive:interp.models.delete.confirm"
 
 exit 0

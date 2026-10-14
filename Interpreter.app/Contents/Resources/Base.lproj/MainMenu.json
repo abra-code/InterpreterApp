@@ -9,6 +9,13 @@
           "actionID": "interp.new",
           "keyboardShortcut": { "key": "n", "modifiers": ["command"] }
         }
+      },
+      { "type": "Button",
+        "properties": {
+          "title": "New Text Transform",
+          "actionID": "interp.transform",
+          "keyboardShortcut": { "key": "n", "modifiers": ["command", "shift"] }
+        }
       }
     ]
   },
@@ -33,8 +40,14 @@
     "children": [
       { "type": "Button",
         "properties": {
-          "title": "Download models...",
+          "title": "Download translation models...",
           "actionID": "interp.models"
+        }
+      },
+      { "type": "Button",
+        "properties": {
+          "title": "Download text transform models...",
+          "actionID": "interp.tmodels"
         }
       }
     ]

@@ -1,0 +1,155 @@
+{
+  "type": "VStack",
+  "properties": {
+    "spacing": 10,
+    "padding": 14,
+    "background": "background",
+    "frame": {
+      "minWidth": 900,
+      "minHeight": 520,
+      "idealWidth": 1040,
+      "idealHeight": 640,
+      "maxWidth": "infinity",
+      "maxHeight": "infinity"
+    }
+  },
+  "children": [
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8 },
+      "children": [
+        { "type": "Text", "properties": { "text": "Transform", "foregroundStyle": "secondary" } },
+        {
+          "type": "Picker",
+          "id": 22,
+          "properties": {
+            "pickerStyle": "menu",
+            "labelsHidden": true,
+            "options": ["Loading..."],
+            "actionID": "interp.transform.preset.changed",
+            "help": "What to do with the text",
+            "frame": { "minWidth": 200, "idealWidth": 240 }
+          }
+        },
+        {
+          "type": "Text",
+          "id": 310,
+          "properties": {
+            "text": "",
+            "font": "caption",
+            "foregroundStyle": "secondary",
+            "frame": { "maxWidth": "infinity", "alignment": "leading" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "HSplitView",
+      "properties": { "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+      "children": [
+        {
+          "type": "VStack",
+          "properties": { "padding": { "top": 2, "bottom": 2, "leading": 2, "trailing": 6 }, "frame": { "minWidth": 320, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "TextEditor",
+              "id": 100,
+              "properties": {
+                "placeholder": "Enter text to rewrite...",
+                "font": { "size": 13, "design": "default" },
+                "background": "background.secondary",
+                "scrollContentBackground": "hidden",
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
+        },
+        {
+          "type": "VStack",
+          "properties": { "padding": { "top": 2, "bottom": 2, "leading": 6, "trailing": 2 }, "frame": { "minWidth": 320, "maxWidth": "infinity", "maxHeight": "infinity" } },
+          "children": [
+            {
+              "type": "TextEditor",
+              "id": 200,
+              "properties": {
+                "readOnly": true,
+                "placeholder": "Result...",
+                "font": { "size": 13, "design": "default" },
+                "background": "background.secondary",
+                "scrollContentBackground": "hidden",
+                "cornerRadius": 8,
+                "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 8 },
+      "children": [
+        {
+          "type": "Text",
+          "id": 110,
+          "properties": { "text": "0 characters", "font": "caption", "foregroundStyle": "secondary", "frame": { "maxWidth": "infinity", "alignment": "leading" } }
+        },
+        { "type": "Text", "properties": { "text": "Model", "foregroundStyle": "secondary" } },
+        {
+          "type": "Picker",
+          "id": 25,
+          "properties": {
+            "pickerStyle": "menu",
+            "labelsHidden": true,
+            "options": ["Loading..."],
+            "actionID": "interp.transform.model.changed",
+            "help": "Choose or download a model for this transform",
+            "frame": { "minWidth": 260, "idealWidth": 300 }
+          }
+        },
+        {
+          "type": "Button",
+          "id": 41,
+          "properties": {
+            "title": "Stop",
+            "buttonStyle": "bordered",
+            "disabled": true,
+            "actionID": "interp.stop"
+          }
+        },
+        {
+          "type": "Button",
+          "id": 40,
+          "properties": {
+            "title": "Rewrite",
+            "buttonStyle": "borderedProminent",
+            "keyboardShortcut": { "key": "return", "modifiers": ["command"] },
+            "actionID": "interp.transform.run"
+          }
+        }
+      ]
+    },
+    {
+      "type": "HStack",
+      "properties": { "spacing": 12 },
+      "children": [
+        {
+          "type": "Text",
+          "id": 300,
+          "properties": { "text": "Loading model...", "font": "caption", "foregroundStyle": "secondary" }
+        },
+        {
+          "type": "Text",
+          "id": 320,
+          "properties": {
+            "text": "",
+            "font": "caption",
+            "foregroundStyle": "orange",
+            "frame": { "maxWidth": "infinity", "alignment": "trailing" }
+          }
+        }
+      ]
+    }
+  ]
+}

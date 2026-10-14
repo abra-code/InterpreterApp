@@ -106,6 +106,23 @@
 			<key>NSUserData</key>
 			<string>interp.service.file</string>
 		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Rewrite with Interpreter</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runOMCService</string>
+			<key>NSPortName</key>
+			<string>OMCService</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.text</string>
+			</array>
+			<key>NSUserData</key>
+			<string>interp.service.transform.text</string>
+		</dict>
 	</array>
 </dict>
 </plist>

@@ -5,7 +5,7 @@
 # every file for an mlx row, exactly the catalog-named quant file for a gguf row - then
 # atomically moves the finished model into place (writing a license NOTICE.txt beside it where
 # the family has one). Interrupted downloads leave staging intact so a later click resumes.
-# Not an OMC command.  args: <hf_author> <repo_name>
+# Not an OMC command.  args: <hf_author> <repo_name> [kind]   kind = translate (default) | transform
 #
 # State files in the work dir ($DOWNLOADS_DIR/<name>):
 #   state   : preparing | downloading | installing | done | error
@@ -17,6 +17,7 @@ source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.models.sh"
 
 author="$1"
 name="$2"
+interp_apply_kind "${3:-translate}"
 repo="$author/$name"
 dest="$MODELS_DIR/$name"
 work="$DOWNLOADS_DIR/$name"
@@ -125,12 +126,30 @@ trap - TERM INT
 
 [ "$rc" != 0 ] && set_err "Download interrupted. Click Download to resume."
 
+# A gguf file that sits in a repo subfolder (gohumanize ships gguf/<file>.gguf) lands in the same
+# subfolder of staging; installs are recognized by a .gguf at the top of the model dir, so move it
+# up. Only the one catalog-named file was downloaded, so the subfolder is left empty and removed.
+if [ "$engine" = gguf ]; then
+    case "$gguf_file" in
+        */*)
+            /bin/mv "$staging/$gguf_file" "$staging/$(/usr/bin/basename "$gguf_file")"
+            mvg=$?
+            [ "$mvg" -eq 0 ] || set_err "Could not save the model. Click Download to retry."
+            /bin/rmdir -p "$staging/$(/usr/bin/dirname "$gguf_file")" 2>/dev/null ;;
+    esac
+fi
+
 # --- install: move into place atomically, drop the license NOTICE beside it ----
 # Per-family license notice: the Gemma families carry the mandatory Gemma notice (only the
 # creator credit differs); Hy-MT2 is Apache 2.0 (attribution, no distribution terms to
 # reproduce beyond the license pointer). A new family must add its own case here; an
 # unrecognized family gets no notice rather than a WRONG one.
-family=$(model_family_of "$name")
+if [ "$INTERP_KIND" = transform ]; then
+    source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
+    family=$(transform_family_of "$name")
+else
+    family=$(model_family_of "$name")
+fi
 case "$family" in
     milmmt)         credit="This model (MiLMMT-46, by Xiaomi, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
     translategemma) credit="This model (TranslateGemma, by Google, built on Gemma 3) is a Model Derivative distributed under the Gemma Terms of Use." ;;
@@ -147,6 +166,12 @@ if [ "$mv_rc" -eq 0 ]; then
 Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
 
 $credit Your use is also subject to the Gemma Prohibited Use Policy at ai.google.dev/gemma/prohibited_use_policy.
+
+$build downloaded from the Hugging Face repository $repo.
+NOTICE
+    elif [ "$family" = humanizer ] || [ "$family" = gohumanize ]; then
+        /bin/cat > "$dest/NOTICE.txt" <<NOTICE
+This model ($(family_display_name "$family"), by $author) is distributed under the Apache License, Version 2.0 - see apache.org/licenses/LICENSE-2.0
 
 $build downloaded from the Hugging Face repository $repo.
 NOTICE

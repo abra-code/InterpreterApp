@@ -39,6 +39,6 @@ done
 # Wipe the regenerated per-window spool tree, and any chooser marker dirs (their pollers are now
 # dead). In-progress downloads' work dirs are left for resume.
 [ -d "$SESSIONS_DIR" ] && /bin/rm -rf "$SESSIONS_DIR"
-/bin/rm -rf "$DOWNLOADS_DIR"/.chooser.* 2>/dev/null
+/bin/rm -rf "$DOWNLOADS_DIR"/.chooser.* "$TRANSFORM_DOWNLOADS_DIR"/.chooser.* 2>/dev/null
 
 exit 0

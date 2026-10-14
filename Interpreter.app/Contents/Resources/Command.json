@@ -227,6 +227,69 @@
     },
     {
       "NAME": "Interpreter",
+      "COMMAND_ID": "interp.transform",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "transform.window",
+        "WINDOW_TITLE": "Text Transform",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.transform.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.window.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.transform.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.transform.preset.changed",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_22_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.transform.model.changed",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_25_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.transform.run",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_100_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.service.transform.text",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tmodels",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "models.window",
+        "WINDOW_TITLE": "Text Transform Models",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.tmodels.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.models.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tmodels.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
       "COMMAND_ID": "interp.window.cancel",
       "EXECUTION_MODE": "exe_script_file"
     },
