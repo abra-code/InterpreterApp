@@ -29,6 +29,13 @@
           "actionID": "interp.open",
           "keyboardShortcut": { "key": "o", "modifiers": ["command"] }
         }
+      },
+      { "type": "Button",
+        "properties": {
+          "title": "Open for Text Transform...",
+          "actionID": "interp.tdoc.open",
+          "keyboardShortcut": { "key": "o", "modifiers": ["command", "shift"] }
+        }
       }
     ]
   },

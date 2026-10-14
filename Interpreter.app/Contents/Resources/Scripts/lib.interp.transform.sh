@@ -124,6 +124,16 @@ publish_transform_job() {   # $1 = spool, $2 = preset file ; source text on STDI
     /bin/mv "$_tmp" "$_spool/job.json"
 }
 
+# The suffix a preset's document output is named with ("report.pdf" -> "report-humanized.txt").
+# It takes the place the target language code has in the translator's names, so the same output
+# helpers (unique_output_path, doc_output_path_for, set_doc_output) name, memoize and uniquify it.
+# Only letters, digits, "-" and "_" are kept - it becomes part of a file name - and a preset
+# without one gets "rewritten".
+transform_output_suffix() {   # $1 = preset file
+    local _s="$(preset_get "$1" output_suffix | /usr/bin/tr -cd 'A-Za-z0-9_-')"
+    /usr/bin/printf '%s' "${_s:-rewritten}"
+}
+
 # Spawn the map broker for a transformer: the bundled llama-server with the preset's server flags,
 # then mlx-agent map --backend openai with the preset's sampling. Mirrors spawn_broker's gguf branch
 # (same failure marker, same server-follows-broker watchdog). Prints the broker pid, or nothing
@@ -228,4 +238,9 @@ apply_preset() {   # $1 = spool, $2 = preset file
     local _button="$(preset_get "$2" button)"
     "$dialog" "$window_uuid" "$TRANSLATE_BTN" omc_set_property "title" "${_button:-Run}"
     "$dialog" "$window_uuid" "$CHECK_TEXT" ""
+    # Document window: the output file is named after the preset, so it follows the switch - to the
+    # file this window already wrote for that preset if there is one, else to a fresh name.
+    if [ "$(/bin/cat "$1/mode" 2>/dev/null)" = transform-doc ]; then
+        refresh_doc_output "$1" "$(transform_output_suffix "$2")"
+    fi
 }

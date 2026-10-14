@@ -1,7 +1,7 @@
 # interp.poll.sh - backgrounded UI poller, one per window. Spawned by interp.window.init (text
 # mode) or interp.doc.init (doc mode). Runs until the spool directory disappears (window close /
 # app quit), then exits. Not an OMC command - launched directly via /bin/sh.
-#   args: <window_uuid> <spool_dir> [mode]   mode = text (default) | doc | transform
+#   args: <window_uuid> <spool_dir> [mode]   mode = text (default) | doc | transform | transform-doc
 #
 # This poller OWNS the mlx-agent map broker. Each tick it:
 #   1. syncs the Model picker + a `modelpaths` index to whatever is installed under Models/,
@@ -20,14 +20,21 @@
 # interp.transform.preset.changed), the broker is keyed on model AND preset (sampling is per
 # broker process), there are no language pickers, and a finished run gets a fact check
 # (transform_check) shown under the result.
+#
+# transform-doc mode (the Text Transform document window) is transform mode with document mode's
+# delivery: the finished result is written to the output file instead of the right-hand editor.
+# The two properties are tracked separately (IS_TRANSFORM, IS_DOC) so each check asks only the
+# question it means.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
 window_uuid="$1"       # override the (inherited) uuid with the explicit arg
 spool="$2"
-MODE="${3:-text}"      # text | doc | transform
+MODE="${3:-text}"      # text | doc | transform | transform-doc
+case "$MODE" in transform|transform-doc) IS_TRANSFORM=1 ;; *) IS_TRANSFORM=0 ;; esac
+case "$MODE" in doc|transform-doc)       IS_DOC=1 ;;       *) IS_DOC=0 ;; esac
 
-if [ "$MODE" = transform ]; then
+if [ "$IS_TRANSFORM" = 1 ]; then
     source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
     VERB_ING="Rewriting"; VERB_PAST="rewritten"
     SAVED_MODEL_KEY="TransformModelName"
@@ -45,7 +52,7 @@ LAST_CHECK_EPOCH=""       # transform mode: epoch whose finished result was alre
 # The transform list carries the preset's family on its first line, so a preset switch to a
 # different family changes the signature sync_models compares and rebuilds the picker.
 window_model_list() {
-    if [ "$MODE" = transform ]; then
+    if [ "$IS_TRANSFORM" = 1 ]; then
         local _preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
         local _fam="$(preset_get "$_preset" family)"
         /usr/bin/printf '#%s\n' "$_fam"
@@ -55,11 +62,11 @@ window_model_list() {
     fi
 }
 window_model_label() {   # $1 = model dir
-    if [ "$MODE" = transform ]; then transform_display_label "$1"; else model_display_label "$1"; fi
+    if [ "$IS_TRANSFORM" = 1 ]; then transform_display_label "$1"; else model_display_label "$1"; fi
 }
 # What the running broker must match: the model, plus the preset in transform mode.
 broker_key() {   # $1 = selected model dir
-    if [ "$MODE" = transform ]; then
+    if [ "$IS_TRANSFORM" = 1 ]; then
         /usr/bin/printf '%s|%s' "$1" "$(/bin/cat "$spool/preset.file" 2>/dev/null)"
     else
         /usr/bin/printf '%s' "$1"
@@ -143,7 +150,7 @@ sync_models() {
 # so the pickers only offer languages the new model supports. Selections survive by saved code;
 # a code the new family lacks falls back to en/es inside the populate.
 sync_languages() {
-    [ "$MODE" = transform ] && return 0
+    [ "$IS_TRANSFORM" = 1 ] && return 0
     local _fam=$(model_family_of "$(/bin/cat "$spool/model.dir" 2>/dev/null)")
     [ "$_fam" = "$(/bin/cat "$spool/langfamily" 2>/dev/null)" ] && return 0
     populate_language_pickers "$spool"
@@ -171,7 +178,7 @@ ensure_broker() {
         # Transform mode: a preset switch to a family with nothing installed leaves no selection
         # while the previous preset's broker is still up and "ready" - retire it, so the window
         # shows "no model" instead of offering a run on the wrong model.
-        [ "$MODE" = transform ] && retire_broker
+        [ "$IS_TRANSFORM" = 1 ] && retire_broker
         return 0        # no model yet; the UI phase handling reports it
     fi
 
@@ -205,7 +212,7 @@ ensure_broker() {
 
     disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
     local _npid
-    if [ "$MODE" = transform ]; then
+    if [ "$IS_TRANSFORM" = 1 ]; then
         _npid="$(spawn_transform_broker "$spool" "$_sel" "$(/bin/cat "$spool/preset.file" 2>/dev/null)")"
     else
         _npid="$(spawn_broker "$spool" "$_sel")"
@@ -238,7 +245,7 @@ reflect_ui() {
     # (A -> B -> A keeps the same broker, and the button would otherwise stay off). A broker that
     # does not match the recorded selection yet is about to be respawned - show it as loading, so
     # Rewrite is never re-enabled against it.
-    if [ "$MODE" = transform ]; then
+    if [ "$IS_TRANSFORM" = 1 ]; then
         [ -f "$spool/ui.stale" ] && { /bin/rm -f "$spool/ui.stale"; LAST_UI_SIG=""; }
         [ -n "$_sel" ] && [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" != "$(broker_key "$_sel")" ] \
             && _state="loading"
@@ -335,7 +342,7 @@ reflect_result() {
     local _rsig="$(/usr/bin/stat -f '%m %z' "$spool/result.txt" 2>/dev/null)"
     [ "$_rsig" = "$LAST_RESULT_SIG" ] && return 0
 
-    if [ "$MODE" = doc ]; then
+    if [ "$IS_DOC" = 1 ]; then
         # Document mode: deliver only the finished translation, and only once. result.txt grows
         # per chunk during mapping; hold off until the broker reports "done". status.json is NOT
         # cleared on re-dispatch, so a prior job's stale "done" could otherwise pair with the new
@@ -369,7 +376,7 @@ reflect_result() {
 # delivery uses), compare the finished result with its source and show what looks wrong. Runs
 # once per epoch; interp.transform.run clears the line when it dispatches the next job.
 check_result() {
-    [ "$MODE" = transform ] || return 0
+    [ "$IS_TRANSFORM" = 1 ] || return 0
     local _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
     [ "$_st" = done ] || return 0
     local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"

@@ -331,6 +331,7 @@ pb_set() { "$OMC_OMC_SUPPORT_PATH/pasteboard" "$1" set "$2"; }
 doc_handoff()     { pb_get "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH"; }
 service_handoff() { pb_get "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE"; }
 transform_service_handoff() { pb_get "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE"; }
+tdoc_handoff() { pb_get "${INTERP_PB_PREFIX}INTERP_TDOC_INPUT_PATH"; }
 
 # ---------------------------------------------------------------------------
 # Calling into the applet's libraries
@@ -512,6 +513,7 @@ reset_document() {
     pb_set "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE" ""
+    pb_set "${INTERP_PB_PREFIX}INTERP_TDOC_INPUT_PATH" ""
     pb_set "interp_epoch_${OMC_ACTIONUI_WINDOW_UUID}" ""
     fakes_reset
     omc_object ""
@@ -531,6 +533,7 @@ reset_window() {
     pb_set "${INTERP_PB_PREFIX}INTERP_DOC_INPUT_PATH" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TEXT_FILE" ""
     pb_set "${INTERP_PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE" ""
+    pb_set "${INTERP_PB_PREFIX}INTERP_TDOC_INPUT_PATH" ""
     pb_set "interp_epoch_${OMC_ACTIONUI_WINDOW_UUID}" ""
     ui_reset
     alerts_reset

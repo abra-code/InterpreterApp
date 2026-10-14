@@ -133,11 +133,17 @@ PB_PREFIX="${INTERP_PB_PREFIX:-}"
 PB_DOC_INPUT="${PB_PREFIX}INTERP_DOC_INPUT_PATH"
 PB_SERVICE_TEXT="${PB_PREFIX}INTERP_SERVICE_TEXT_FILE"
 PB_SERVICE_TRANSFORM_TEXT="${PB_PREFIX}INTERP_SERVICE_TRANSFORM_TEXT_FILE"
+PB_TDOC_INPUT="${PB_PREFIX}INTERP_TDOC_INPUT_PATH"
 
 # Open the document-translation window for a file: stash the path on the private handoff key that
 # interp.doc.init consumes, then chain to the doc window. Shared by the launch/drop dispatcher,
 # File > Open, and the "Translate with Interpreter" file service so the handoff stays in one place.
 route_document() { pb_set "$PB_DOC_INPUT" "$1"; "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.doc"; }
+
+# The same for the Text Transform document window (File > Open for Text Transform, and the
+# "Rewrite with Interpreter" file service). Its own key, so a translation handoff and a transform
+# handoff in flight together cannot open each other's window on the wrong file.
+route_transform_document() { pb_set "$PB_TDOC_INPUT" "$1"; "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.tdoc"; }
 
 spool_dir_for() { echo "$SESSIONS_DIR/$1"; }
 
@@ -686,7 +692,10 @@ pdf_ocr_page() {   # $1 = spool, $2 = input pdf, $3 = page number, $4 = append-t
 pdf_extract_text() {   # $1 = input pdf, $2 = output txt, $3 = spool, $4 = From lang code (BCP-47)
     local _in="$1" _out="$2" _spool="$3" _lang="$4"
     local _raw="$_spool/pdf.pages.raw" _total _k _ptxt _need _done _rc
+    # No language hint (the transform window has no From language): start in auto mode. In lang
+    # mode with an empty hint, pdf_ocr_page would match none of its branches and fail every page.
     OCR_LANG_MODE=lang
+    [ -n "$_lang" ] || OCR_LANG_MODE=auto
 
     # A wholly text-less PDF makes `text` itself exit non-zero ("no extractable text") - that
     # is the all-pages-scanned signal, not unreadability, so continue with an empty raw and
@@ -731,7 +740,9 @@ pdf_extract_text() {   # $1 = input pdf, $2 = output txt, $3 = spool, $4 = From 
         case " $_empties " in
             *" $_k "*)
                 _done=$((_done + 1))
-                set_status "Recognizing text — page $_done of $_need…"
+                # Braced: bash 3.2 reads the first byte of a non-ASCII character as part of a bare
+                # variable name, so "$_need" followed by the ellipsis expanded to nothing.
+                set_status "Recognizing text — page $_done of ${_need}…"
                 pdf_ocr_page "$_spool" "$_in" "$_k" "$_out.tmp" "$_lang"
                 _rc=$?
                 if [ "$_rc" -ne 0 ]; then

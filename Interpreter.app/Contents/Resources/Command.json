@@ -290,6 +290,63 @@
     },
     {
       "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tdoc",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "transform.doc.window",
+        "WINDOW_TITLE": "Transform Document",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.tdoc.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.doc.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tdoc.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tdoc.run",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tdoc.choose.output",
+      "EXECUTION_MODE": "exe_script_file",
+      "SAVE_AS_DIALOG": {
+        "MESSAGE": "Save the result as",
+        "ALLOWED_CONTENT_TYPES": [
+          "public.plain-text"
+        ]
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tdoc.open",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose a document to rewrite",
+        "ALLOW_MULTIPLE_ITEMS": false,
+        "ALLOWED_CONTENT_TYPES": [
+          "public.text",
+          "com.adobe.pdf",
+          "com.apple.rtfd",
+          "com.microsoft.word.doc",
+          "org.openxmlformats.wordprocessingml.document",
+          "com.microsoft.word.wordml",
+          "org.oasis-open.opendocument.text",
+          "com.apple.webarchive"
+        ]
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.service.transform.file",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
       "COMMAND_ID": "interp.window.cancel",
       "EXECUTION_MODE": "exe_script_file"
     },
