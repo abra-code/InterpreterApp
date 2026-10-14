@@ -1,0 +1,32 @@
+{
+  "id": "fix-grammar",
+  "name": "Fix grammar",
+  "family": "gemma4it",
+  "button": "Fix",
+  "notice": "Corrects spelling, grammar and punctuation and leaves the rest of the wording alone. Works in many languages.",
+  "output_suffix": "corrected",
+  "server": {
+    "chat_template_kwargs": "{\"enable_thinking\":false}",
+    "ctx_size": 8192,
+    "top_k": 64
+  },
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.2,
+    "top_p": 0.95
+  },
+  "job": {
+    "budget_tokens": 600,
+    "messages": [
+      {
+        "content": "Correct the spelling, grammar and punctuation of the text the user sends. Change as little as possible: keep the wording, tone and meaning, and leave sentences that are already correct exactly as they are. Return only the rewritten text: no preamble, no explanation, no quotation marks around it, no notes about what you changed. Write in the same language as the text. Keep the paragraph breaks, and keep lists as lists. Keep every fact, number, date, name and quotation unchanged.",
+        "role": "system"
+      },
+      {
+        "content": "{{chunk}}",
+        "role": "user"
+      }
+    ],
+    "output": "stitch"
+  }
+}

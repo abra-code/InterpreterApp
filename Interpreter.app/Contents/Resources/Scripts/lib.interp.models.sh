@@ -37,7 +37,7 @@ machine_ram_bytes() { "$sysctl_tool" -n hw.memsize 2>/dev/null; }
 bytes_to_gb() { /usr/bin/awk -v b="$1" 'BEGIN{ if(b+0<=0){print "?"} else printf "%.1f GB", b/1000000000 }'; }
 
 # Human name of a model family (catalog `family` column value -> display string).
-family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; hymt) echo "Hy-MT2";; humanizer) echo "Humanizer";; gohumanize) echo "GoHumanize";; *) echo "$1";; esac; }
+family_display_name() { case "$1" in translategemma) echo "TranslateGemma";; milmmt) echo "MiLMMT-46";; hymt) echo "Hy-MT2";; humanizer) echo "Humanizer";; gohumanize) echo "GoHumanize";; gemma4it) echo "Gemma 4";; *) echo "$1";; esac; }
 
 # One-sentence model-specific guidance for a family, shown on every curated card (prepended to
 # the section rationale) and in the info sheet, so a user can pick BETWEEN families, not just
@@ -51,6 +51,7 @@ family_blurb() {   # $1 = family
         hymt)           echo "Tencent's translator: the top pick for Chinese and Japanese; for European languages prefer the other families." ;;
         humanizer)      echo "Rewrites English or Chinese AI-sounding drafts to read as written by a person, keeping the facts." ;;
         gohumanize)     echo "A small, fast English-only rewriter for AI-sounding drafts; leaves more text unchanged." ;;
+        gemma4it)       echo "Google's general model: runs the editing transforms - grammar, tone, length and plain language - in many languages." ;;
         *)              echo "" ;;
     esac
 }

@@ -1,0 +1,32 @@
+{
+  "id": "casual",
+  "name": "Make casual",
+  "family": "gemma4it",
+  "button": "Rewrite",
+  "notice": "Rewrites the text in a friendly, conversational tone, as a person would write to a colleague.",
+  "output_suffix": "casual",
+  "server": {
+    "chat_template_kwargs": "{\"enable_thinking\":false}",
+    "ctx_size": 8192,
+    "top_k": 64
+  },
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.7,
+    "top_p": 0.95
+  },
+  "job": {
+    "budget_tokens": 600,
+    "messages": [
+      {
+        "content": "Rewrite the text the user sends in a friendly, conversational tone, as a person would write to a colleague. Use plain words and contractions, but do not add new content. Return only the rewritten text: no preamble, no explanation, no quotation marks around it, no notes about what you changed. Write in the same language as the text. Keep the paragraph breaks, and keep lists as lists. Keep every fact, number, date, name and quotation unchanged.",
+        "role": "system"
+      },
+      {
+        "content": "{{chunk}}",
+        "role": "user"
+      }
+    ],
+    "output": "stitch"
+  }
+}

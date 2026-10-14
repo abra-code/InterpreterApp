@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 # transform_check.pl - post-run check of a text transformer's output against its source.
-#   usage: perl transform_check.pl <source file> <result file>
+#   usage: perl transform_check.pl [--checks "numbers script length"] <source file> <result file>
 # Prints one human-readable line describing what looks wrong, or nothing when the check passes.
 # Exit status is always 0 for a completed check; a non-zero exit means the files could not be read.
 #
@@ -17,11 +17,15 @@
 #     English number words in the source ("four", "tenth") count as present, which removes most of
 #     those. A digit right after a Latin letter ("k8s", "Q3") is part of a name, not a number, on
 #     both sides - Latin only, because Chinese writes digits directly after Han characters (据2024年).
+#     Two more spellings of the same number count as present: "40k" in the source vouches for
+#     40000 in the result, and the minutes of a clock time ("2am" -> "2:00 a.m.") are not new.
 #   - script switch: the Humanizer card documents short English drafts sometimes coming back in
 #     Chinese. Reported when the share of Han characters among letters jumps across 30% either way.
 #   - much shorter: a result with under 60% of the source's letters has probably dropped content
 #     (the spike saw a whole paragraph vanish, with no number in it for the checks above to miss).
 #     Measured on the spike's 43 Humanizer rewrites: they ran from 70% to 111% of the source.
+# --checks names the checks to run: "numbers" (both number checks), "script" and "length"; without
+# it all of them run. A preset whose job is to change the length ("Make concise") turns off "length".
 use strict;
 use warnings;
 
@@ -65,6 +69,15 @@ sub han_share {
     return $han / $letters;
 }
 
+my %enabled = (numbers => 1, script => 1, length => 1);
+if (@ARGV && $ARGV[0] eq '--checks') {
+    shift @ARGV;
+    my $list = shift @ARGV;
+    my %asked = map { $_ => 1 } grep { /^(?:numbers|script|length)$/ } split ' ', (defined $list ? $list : '');
+    # A list naming no known check (a typo such as "lenght") runs every check rather than none:
+    # silently switching the check off is the worse failure.
+    %enabled = %asked if %asked;
+}
 my ($source_path, $result_path) = @ARGV;
 exit 2 unless defined $source_path && defined $result_path;
 my $source = slurp($source_path);
@@ -75,7 +88,9 @@ my @problems;
 
 my $src_han = han_share($source);
 my $res_han = han_share($result);
-if ($src_han < 0.3 && $res_han >= 0.3) {
+if (!$enabled{script}) {
+    # not asked for
+} elsif ($src_han < 0.3 && $res_han >= 0.3) {
     push @problems, 'the result switched to Chinese';
 } elsif ($src_han >= 0.3 && $res_han < 0.3) {
     push @problems, 'the result switched away from Chinese';
@@ -88,13 +103,23 @@ while ($result =~ /(?<![\d\p{Latin}])(?<!\d[.,])(\d+(?:[.,]\d+)*)(?!\d)/g) {
     $n =~ s/,(?=\d{3}(?!\d))//g;
     $have{$n} = 1;
 }
-my (@missing, %seen);
-while ($source =~ /(?<![\d\p{Latin}])(?<!\d[.,])(\d+(?:[.,]\d+)*)(?!\d)/g) {
+my (@missing, %seen, %checked, %thousands);
+while ($source =~ /(?<![\d\p{Latin}])(?<!\d[.,])(\d+(?:[.,]\d+)*)(?!\d)([kK](?!\p{L}))?/g) {
     my $raw = $1;
     my $n = $raw;
     $n =~ s/,(?=\d{3}(?!\d))//g;
-    next if $seen{$n}++;
-    push @missing, $raw unless $have{$n};
+    $seen{$n} = 1;
+    # "40k" written out in full is the same number. A result that writes "40,000" no longer
+    # contains the source's "40", so the scaled value stands in for THAT "40" - not for a plain
+    # "40" elsewhere in the source, which is checked (and deduplicated) on its own.
+    my $full;
+    if (defined $2 && $n =~ /^\d+(?:\.\d+)?$/) {
+        $full = $n * 1000;
+        $full = int($full) if $full == int($full);
+        $thousands{$full} = 1;
+    }
+    next if $checked{defined $full ? "${n}k" : $n}++;
+    push @missing, $raw unless $have{$n} || (defined $full && $have{$full});
 }
 # Spelled-out numbers in the source vouch for the same number written as digits in the result.
 my %spelled;
@@ -105,10 +130,18 @@ while ($source =~ /\b(\p{L}+)\b/g) {
 my (@added, %added_seen);
 while ($result =~ /(?<![\d\p{Latin}])(?<!\d[.,])(\d+(?:[.,]\d+)*)(?!\d)/g) {
     my $raw = $1;
+    my $start = $-[1];   # read before any other match resets @-
+    # The minutes of a clock time ("2:00", "14:30"): two digits 00-59 right after "<digit>:". Any
+    # other number after a colon ("a 1:250 scale") is still a number.
+    next if $raw =~ /^[0-5]\d$/ && $start >= 2 && substr($result, $start - 2, 2) =~ /^\d:$/;
     my $n = $raw;
     $n =~ s/,(?=\d{3}(?!\d))//g;
-    next if $seen{$n} || $spelled{$n} || $added_seen{$n}++;
+    next if $seen{$n} || $spelled{$n} || exists $thousands{$n} || $added_seen{$n}++;
     push @added, $raw;
+}
+if (!$enabled{numbers}) {
+    @missing = ();
+    @added = ();
 }
 if (@missing) {
     my $count = scalar @missing;
@@ -126,7 +159,7 @@ if (@added) {
 
 my $src_letters = letter_count($source);
 my $res_letters = letter_count($result);
-if ($src_letters >= 200 && $res_letters < 0.6 * $src_letters) {
+if ($enabled{length} && $src_letters >= 200 && $res_letters < 0.6 * $src_letters) {
     push @problems, sprintf('the result is much shorter than the original (%d%%), so text may be missing',
         100 * $res_letters / $src_letters);
 }

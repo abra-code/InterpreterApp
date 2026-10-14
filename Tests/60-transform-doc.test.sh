@@ -57,7 +57,8 @@ check "the window is in transform-doc mode" "transform-doc" "$(spool_file mode)"
 wait_for_calls interp.poll.sh 1
 # The mode makes the shared poller run the transform model logic AND write the result to a file.
 check "and the poller was told so" "transform-doc" "$(fake_arg_at interp.poll.sh 3)"
-check "the Transform picker is filled" '["Humanize"]' "$(ui_prop "$PRESET_PICKER" options)"
+check "the Transform picker is filled" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify"]' \
+    "$(ui_prop "$PRESET_PICKER" options)"
 check "the output is named after the preset" "$OMCTEST_WORK/report-humanized.txt" "$(output_path)"
 check "and shown" "$OMCTEST_WORK/report-humanized.txt" "$(ui_value "$OUTPUT_PATH_TEXT")"
 check "nothing is previewed yet" "" "$(ui_value "$QL_OUTPUT")"

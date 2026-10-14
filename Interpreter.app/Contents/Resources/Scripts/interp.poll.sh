@@ -385,7 +385,8 @@ check_result() {
     [ "$_ep" = "$LAST_CHECK_EPOCH" ] && return 0
     [ -f "$spool/result.txt" ] && [ -f "$spool/source.$_ep.txt" ] || return 0
     LAST_CHECK_EPOCH="$_ep"
-    transform_check "$spool/source.$_ep.txt" "$spool/result.txt" "$spool/check.txt"
+    transform_check "$spool/source.$_ep.txt" "$spool/result.txt" "$spool/check.txt" \
+        "$(/bin/cat "$spool/job.preset" 2>/dev/null)"
     "$dialog" "$window_uuid" "$CHECK_TEXT" "$(/bin/cat "$spool/check.txt" 2>/dev/null)"
 }
 

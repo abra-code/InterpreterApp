@@ -83,6 +83,7 @@ transform_family_display_name() {   # $1 = family
     case "$1" in
         humanizer)  echo "Humanizer" ;;
         gohumanize) echo "GoHumanize" ;;
+        gemma4it)   echo "Gemma 4" ;;
         *)          echo "$1" ;;
     esac
 }
@@ -121,6 +122,9 @@ publish_transform_job() {   # $1 = spool, $2 = preset file ; source text on STDI
     fi
     /bin/rm -f "$_spool/result.txt" "$_spool/translate.start" "$_spool/translate.elapsed" "$_spool/check.txt"
     /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$_spool/translate.start" 2>/dev/null
+    # The preset this job was built from, for the post-run check (the picker may have moved on by
+    # the time the job finishes).
+    /usr/bin/printf '%s' "$_preset" > "$_spool/job.preset"
     /bin/mv "$_tmp" "$_spool/job.json"
 }
 
@@ -184,11 +188,19 @@ spawn_transform_broker() {   # $1 = spool, $2 = model dir, $3 = preset file
     echo "$_bpid"
 }
 
-# Fact check of a finished rewrite: numbers in the source that are missing from the result, and a
-# script switch (Latin in, Chinese out or the reverse). Writes a one-line human summary to
-# $3 (empty file when nothing was found). The analysis lives in transform_check.pl.
-transform_check() {   # $1 = source file, $2 = result file, $3 = output file
-    /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" "$1" "$2" > "$3" 2>/dev/null || : > "$3"
+# Fact check of a finished rewrite: numbers missing from or added to the result, a script switch
+# (Latin in, Chinese out or the reverse), and a result far shorter than its source. Writes a
+# one-line human summary to $3 (empty file when nothing was found). The analysis lives in
+# transform_check.pl. A preset's optional "checks" string ("numbers script length") picks which of
+# the three apply - "Make concise" is supposed to shorten - and without one all three run.
+transform_check() {   # $1 = source file, $2 = result file, $3 = output file, [$4 = preset file]
+    local _checks=""
+    [ -n "${4:-}" ] && _checks="$(preset_get "$4" checks | /usr/bin/tr -cd 'a-z ')"
+    if [ -n "$_checks" ]; then
+        /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" --checks "$_checks" "$1" "$2" > "$3" 2>/dev/null || : > "$3"
+    else
+        /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" "$1" "$2" > "$3" 2>/dev/null || : > "$3"
+    fi
 }
 
 # Fill the Transform picker from the bundled presets and select the saved one (defaults key

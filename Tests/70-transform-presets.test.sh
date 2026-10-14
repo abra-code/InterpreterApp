@@ -1,0 +1,139 @@
+#!/bin/sh
+# Tests/70-transform-presets.test.sh - the editing presets that run on a general instruct model
+# (Gemma 4 12B instruct), and the per-preset choice of post-run checks.
+#
+# The spike's two expensive lessons are pinned here. Gemma 4's chat template thinks whenever
+# llama-server enables thinking, which it does by default: the broker keeps only the answer, so a
+# preset without enable_thinking false spends its whole token budget on hidden reasoning and
+# returns an EMPTY result. And a preset whose job is to shorten text must not be told its result
+# is "much shorter than the original".
+. "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
+. "$OMCTEST_TESTS/lib.test.interp.sh"
+
+PRESETS="$APP_RESOURCES/Transformers"
+CATALOG="$APP_RESOURCES/models.transform.catalog.tsv"
+
+section "the Gemma 4 family is in the catalog, named and described"
+check "two Gemma 4 variants are offered" "2" \
+    "$(/usr/bin/awk -F'\t' '$1 == "gemma4it" { n++ } END { print n + 0 }' "$CATALOG")"
+check "a GGUF row each" "2" \
+    "$(/usr/bin/awk -F'\t' '$1 == "gemma4it" && $6 == "gguf" { n++ } END { print n + 0 }' "$CATALOG")"
+check "the family has a display name" "Gemma 4" "$(interp_call family_display_name gemma4it)"
+check "and a description" "yes" "$([ -n "$(interp_call family_blurb gemma4it)" ] && echo yes || echo no)"
+check "which cannot break the card JSON" "0" "$(interp_call family_blurb gemma4it | /usr/bin/grep -c '["\\]')"
+reset_document
+q8="$(make_transform_model gemma-4-12B-it-8bit)"
+check "an installed variant is labeled" "Gemma 4 12B (8-bit)" "$(interp_tcall transform_display_label "$q8")"
+check "and belongs to its family" "gemma4it" "$(interp_tcall transform_family_of "$q8")"
+
+section "every Gemma 4 preset is a chat preset with thinking turned off"
+n=0
+for f in "$PRESETS"/*.json; do
+    [ "$(/usr/bin/plutil -extract family raw -o - "$f")" = gemma4it ] || continue
+    n=$((n + 1))
+    name="$(/usr/bin/basename "$f")"
+    check "$name disables thinking" '{"enable_thinking":false}' \
+        "$(/usr/bin/plutil -extract server.chat_template_kwargs raw -o - "$f" 2>/dev/null | /usr/bin/tr -d ' ')"
+    check "$name sends chat messages" "yes" \
+        "$(/usr/bin/plutil -extract job.messages json -o - "$f" >/dev/null 2>&1 && echo yes || echo no)"
+    check "$name puts the text in the user turn" "{{chunk}}" \
+        "$(/usr/bin/plutil -extract job.messages.1.content raw -o - "$f" 2>/dev/null)"
+    check "$name gives the model its instructions as a system turn" "system" \
+        "$(/usr/bin/plutil -extract job.messages.0.role raw -o - "$f" 2>/dev/null)"
+done
+check "there are Gemma 4 presets at all" "yes" "$([ "$n" -ge 1 ] && echo yes || echo no)"
+
+section "preset ids and names are unique, and checks name only known checks"
+check "no two presets share an id" "" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract id raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
+check "no two presets share a name" "" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract name raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
+check "every checks word is numbers, script or length" "" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract checks raw -o - "$f" 2>/dev/null; echo; done \
+        | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -x -e '' -e numbers -e script -e length)"
+
+section "a preset can turn the length check off, and only that"
+long="$(make_text_file p.long "$(/usr/bin/awk 'BEGIN { for (i = 0; i < 30; i++) printf "Every paragraph here says something about 42 things. " }')")"
+short="$(make_text_file p.short 'It says something about 41 things.')"
+check "by default a much shorter result is flagged" "yes" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$long" "$short")" 'much shorter')"
+check "with length off it is not" "no" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'numbers script' "$long" "$short")" 'much shorter')"
+check "but the numbers are still checked" "yes" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'numbers script' "$long" "$short")" '42')"
+check "and with numbers off they are not" "" \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'script' "$long" "$short")"
+
+section "a formal rewrite may spell numbers out in full; a wrong or dropped one is still caught"
+# Seen in the spike: "Make formal" turned "40k rows ... around 2am" into "40,000 rows ... 2:00 AM".
+casual="$(make_text_file k.src 'The script choked on like 40k rows, so we rolled back around 2am.')"
+formal="$(make_text_file k.formal 'The script failed on approximately 40,000 rows; a rollback was performed at 2:00 AM.')"
+check "40k written as 40,000 and 2am as 2:00 are the same numbers" "" \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$casual" "$formal")"
+wrong="$(make_text_file k.wrong 'The script failed on approximately 4,000 rows; a rollback was performed at 2:00 AM.')"
+check "40k written as 4,000 is caught both ways" \
+    "Check: 1 number from the original is missing: 40; 1 number is not in the original: 4,000." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$casual" "$wrong")"
+dropped="$(make_text_file k.dropped 'The script failed on many rows; a rollback was performed at 2:00 AM.')"
+check "and dropping it is caught" "Check: 1 number from the original is missing: 40." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$casual" "$dropped")"
+# Only a clock's minutes are excused: an hour that changed is still a new number.
+hour="$(make_text_file k.hour 'The script failed on approximately 40,000 rows; a rollback was performed at 3:00 AM.')"
+check "a changed hour is still caught" "Check: 1 number from the original is missing: 2; 1 number is not in the original: 3." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$casual" "$hour")"
+# And only minutes: any other number after a colon is new.
+scale="$(make_text_file k.scale 'The script failed on approximately 40,000 rows; a rollback was performed at 2:00 AM, on a 2:250 scale.')"
+check "a number after a colon that is not minutes is caught" "Check: 1 number is not in the original: 250." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$casual" "$scale")"
+# "40k" vouches for its own 40 only: a separate plain 40 that was dropped is still missing.
+both="$(make_text_file k.both 'We have 40 servers and 40k rows.')"
+onlyk="$(make_text_file k.onlyk 'We have 40,000 rows.')"
+check "a plain 40 next to a 40k is checked on its own" "Check: 1 number from the original is missing: 40." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" "$both" "$onlyk")"
+
+section "a checks list that names no known check runs every check"
+check "a misspelled list does not switch the checks off" "yes" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'lenght' "$long" "$short")" 'much shorter')"
+check "an unknown word beside a known one is ignored" "no" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'numbers bogus' "$long" "$short")" 'much shorter')"
+
+section "the shell passes a preset's checks, and runs all of them without a preset"
+nolen="$OMCTEST_WORK/nolength.json"
+printf '{ "id": "x", "name": "X", "family": "gemma4it", "checks": "numbers script" }\n' > "$nolen"
+out="$OMCTEST_WORK/check.out"
+interp_tcall transform_check "$long" "$short" "$out" "$nolen"
+check "the preset's choice is honored" "no" "$(contains "$(/bin/cat "$out")" 'much shorter')"
+interp_tcall transform_check "$long" "$short" "$out"
+check "without a preset every check runs" "yes" "$(contains "$(/bin/cat "$out")" 'much shorter')"
+interp_tcall transform_check "$long" "$short" "$out" "$APP_RESOURCES/Transformers/10-humanize.json"
+check "a preset without a checks field runs every check" "yes" "$(contains "$(/bin/cat "$out")" 'much shorter')"
+# Anything but letters and spaces is stripped before it reaches the command line.
+evil="$OMCTEST_WORK/evil.json"
+printf '{ "id": "e", "name": "E", "family": "gemma4it", "checks": "numbers; touch /tmp/pwned" }\n' > "$evil"
+interp_tcall transform_check "$long" "$short" "$out" "$evil"
+check "a hostile checks string only selects known checks" "no" "$(contains "$(/bin/cat "$out")" 'much shorter')"
+
+section "a published job records its preset, for the check that runs when it finishes"
+reset_document
+/bin/mkdir -p "$(spool_dir)"
+printf 'Some text.' | interp_tcall publish_transform_job "$(spool_dir)" "$APP_RESOURCES/Transformers/10-humanize.json"
+check "the job's preset is recorded" "$APP_RESOURCES/Transformers/10-humanize.json" "$(spool_file job.preset)"
+
+section "the transform chooser's info sheet credits Google and Apache 2.0 for Gemma 4"
+reset_document
+omc_control_defaults models.window
+omc_run interp.tmodels.init
+/bin/mkdir -p "$(transform_cache_dir)"
+printf 'best\tgemma4it\tggml-org\tgemma-4-12B-it-8bit\tGemma 4 12B (8-bit)\t12669646976\t0\tGeneral.\n' \
+    > "$(transform_cache_dir)/curated.tsv"
+omc_trigger 2016
+omc_run interp.models.info
+info_md="$(ui_value 4010)"
+check "the maker is Google" "yes" "$(contains "$info_md" "Created by Google (Gemma 4 12B instruct).")"
+check "it is a GGUF build" "yes" "$(contains "$info_md" "GGUF build")"
+check "from the real repo" "yes" "$(contains "$info_md" "ggml-org/gemma-4-12B-it-GGUF")"
+check "under Apache 2.0" "yes" "$(contains "$info_md" "Apache License")"
+check "not the Gemma Terms of Use" "no" "$(contains "$info_md" "Gemma Terms of Use")"
+
+reset_document
+omctest_end

@@ -169,6 +169,12 @@ $credit Your use is also subject to the Gemma Prohibited Use Policy at ai.google
 
 $build downloaded from the Hugging Face repository $repo.
 NOTICE
+    elif [ "$family" = gemma4it ]; then
+        /bin/cat > "$dest/NOTICE.txt" <<NOTICE
+This model (Gemma 4 12B instruct, by Google) is distributed under the Apache License, Version 2.0 - see apache.org/licenses/LICENSE-2.0
+
+$build downloaded from the Hugging Face repository $repo.
+NOTICE
     elif [ "$family" = humanizer ] || [ "$family" = gohumanize ]; then
         /bin/cat > "$dest/NOTICE.txt" <<NOTICE
 This model ($(family_display_name "$family"), by $author) is distributed under the Apache License, Version 2.0 - see apache.org/licenses/LICENSE-2.0

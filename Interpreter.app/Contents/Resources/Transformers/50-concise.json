@@ -1,0 +1,33 @@
+{
+  "id": "concise",
+  "name": "Make concise",
+  "family": "gemma4it",
+  "button": "Shorten",
+  "notice": "Shortens the text to about half by cutting repetition, filler and hedging, keeping the facts.",
+  "output_suffix": "concise",
+  "checks": "numbers script",
+  "server": {
+    "chat_template_kwargs": "{\"enable_thinking\":false}",
+    "ctx_size": 8192,
+    "top_k": 64
+  },
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.4,
+    "top_p": 0.95
+  },
+  "job": {
+    "budget_tokens": 600,
+    "messages": [
+      {
+        "content": "Rewrite the text the user sends to be as short as it can be without losing information: remove repetition, filler, hedging and throat-clearing. Aim for about half the length. Return only the rewritten text: no preamble, no explanation, no quotation marks around it, no notes about what you changed. Write in the same language as the text. Keep the paragraph breaks, and keep lists as lists. Keep every fact, number, date, name and quotation unchanged.",
+        "role": "system"
+      },
+      {
+        "content": "{{chunk}}",
+        "role": "user"
+      }
+    ],
+    "output": "stitch"
+  }
+}

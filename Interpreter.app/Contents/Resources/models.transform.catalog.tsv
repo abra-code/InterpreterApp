@@ -10,3 +10,5 @@
 humanizer	jialinyyzz	humanizer-12B-8bit	12	8	gguf	humanizer-GGUF/humanizer-12b-Q8_0.gguf
 humanizer	jialinyyzz	humanizer-12B-6bit	12	6	gguf	humanizer-GGUF/humanizer-12b-Q6_K.gguf
 humanizer	jialinyyzz	humanizer-12B-4bit	12	4	gguf	humanizer-GGUF/humanizer-12b-Q4_K_M.gguf
+gemma4it	ggml-org	gemma-4-12B-it-8bit	12	8	gguf	gemma-4-12B-it-GGUF/gemma-4-12B-it-Q8_0.gguf
+gemma4it	google	gemma-4-12B-it-4bit	12	4	gguf	gemma-4-12B-it-qat-q4_0-gguf/gemma-4-12b-it-qat-q4_0.gguf
