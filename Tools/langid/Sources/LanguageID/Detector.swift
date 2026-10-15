@@ -76,8 +76,12 @@ public enum LanguageDetector {
     /// `maxCharacters` bounds READING, which is still worth doing - it is what stops a multi-GB
     /// file being pulled into memory - but it no longer meaningfully bounds analysis, because
     /// only the windows are analyzed.
-    public static func identify(_ text: String, maxCharacters: Int = 4000) -> LanguageIdentification
-    {
+    /// `keepScript` keeps the script subtag the recognizer reports (zh-Hans, zh-Hant) instead of
+    /// folding it into the language - see `LanguageTag.normalizeKeepingScript`. Mass is still
+    /// summed per resulting code, so the default folding below is the keepScript-off case of it.
+    public static func identify(
+        _ text: String, maxCharacters: Int = 4000, keepScript: Bool = false
+    ) -> LanguageIdentification {
         let sample = String(text.prefix(max(1, maxCharacters)))
         guard !sample.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return LanguageIdentification(
@@ -98,7 +102,10 @@ public enum LanguageDetector {
             // 0.612 and zh-Hans 0.379 - so normalizing both to "zh" without folding would list
             // zh as its own alternative and report 0.612 for a language holding 0.991.
             for (language, probability) in hypotheses {
-                let code = LanguageTag.normalize(language.rawValue) ?? language.rawValue
+                let code =
+                    (keepScript
+                    ? LanguageTag.normalizeKeepingScript(language.rawValue)
+                    : LanguageTag.normalize(language.rawValue)) ?? language.rawValue
                 totals[code, default: 0] += probability
             }
         }
@@ -117,6 +124,28 @@ public enum LanguageDetector {
                 $0.confidence != $1.confidence
                     ? $0.confidence > $1.confidence : $0.code < $1.code
             }
+
+        // With keepScript the WINNER is still decided by language, not by script, and its
+        // confidence is the language's whole mass: "中文" came back zh-Hans 0.47, zh-Hant 0.38,
+        // ja 0.15, and judging the scripts separately would refuse an 85% Chinese answer under a
+        // 0.5 floor. The answer is the language's strongest script; the hypotheses stay per script.
+        if keepScript, let best = ranked.first {
+            var languageMass: [String: Double] = [:]
+            for hypothesis in ranked {
+                let language = LanguageTag.normalize(hypothesis.code) ?? hypothesis.code
+                languageMass[language, default: 0] += hypothesis.confidence
+            }
+            let winner =
+                languageMass.max {
+                    $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key
+                }?.key ?? best.code
+            let code =
+                ranked.first { (LanguageTag.normalize($0.code) ?? $0.code) == winner }?.code
+                ?? best.code
+            return LanguageIdentification(
+                code: code, confidence: languageMass[winner], hypotheses: ranked,
+                sampledCharacters: sample.count)
+        }
 
         return LanguageIdentification(
             code: ranked.first?.code, confidence: ranked.first?.confidence, hypotheses: ranked,

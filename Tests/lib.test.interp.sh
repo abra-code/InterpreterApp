@@ -113,6 +113,7 @@ INTERP_SYSCTL_TOOL="$FAKE_BIN/sysctl"
 INTERP_AGENT_BIN="$FAKE_BIN/mlx-agent"
 INTERP_LLAMA_SERVER_BIN="$FAKE_BIN/llama-server"
 INTERP_PDFUTIL_BIN="$FAKE_BIN/pdfutil"
+INTERP_LANGID_BIN="$FAKE_BIN/langid"
 INTERP_POLL_SCRIPT="$FAKE_BIN/interp.poll.sh"
 INTERP_MODELS_LOAD_SCRIPT="$FAKE_BIN/interp.models.load.sh"
 INTERP_MODELS_POLL_SCRIPT="$FAKE_BIN/interp.models.poll.sh"
@@ -120,7 +121,7 @@ INTERP_DOWNLOAD_WORKER_SCRIPT="$FAKE_BIN/interp.download.worker.sh"
 
 export INTERP_FAKE_DIR INTERP_APP_SUPPORT INTERP_PB_PREFIX
 export INTERP_DEFAULTS_TOOL INTERP_OPEN_TOOL INTERP_CURL_TOOL INTERP_SYSCTL_TOOL
-export INTERP_AGENT_BIN INTERP_LLAMA_SERVER_BIN INTERP_PDFUTIL_BIN
+export INTERP_AGENT_BIN INTERP_LLAMA_SERVER_BIN INTERP_PDFUTIL_BIN INTERP_LANGID_BIN
 export INTERP_POLL_SCRIPT INTERP_MODELS_LOAD_SCRIPT INTERP_MODELS_POLL_SCRIPT
 export INTERP_DOWNLOAD_WORKER_SCRIPT
 
@@ -135,7 +136,7 @@ fakes_install() {
     /bin/chmod +x "$FAKE_BIN/defaults"
     # One recorder body under every name whose only assertable effect is that it
     # was launched. $0's basename decides which log each writes.
-    for tool in open curl sysctl mlx-agent llama-server pdfutil \
+    for tool in open curl sysctl mlx-agent llama-server pdfutil langid \
                 interp.poll.sh interp.models.load.sh interp.models.poll.sh \
                 interp.download.worker.sh; do
         /bin/cp "$TEST_HELPERS/recorder" "$FAKE_BIN/$tool"

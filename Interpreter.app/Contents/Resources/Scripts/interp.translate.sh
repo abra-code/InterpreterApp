@@ -28,7 +28,7 @@ enable_ctrl "$STOP_BTN"
 
 # Resolve picker indices (1-based) to language codes via the ordered code file. A stale/bogus
 # index that resolves to nothing is surfaced, not silently dropped.
-src_code=$(resolve_lang_code "$spool" "$from_idx")
+src_code=$(resolve_from_code "$spool" "$from_idx")
 tgt_code=$(resolve_lang_code "$spool" "$to_idx")
 if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
@@ -36,6 +36,24 @@ if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     set_status "Please choose valid From and To languages."
     exit 0
 fi
+
+# Detect language: name the source language from the text itself. A text it cannot name, or one
+# already in the To language, is said in the status line instead of being translated.
+detected=""
+if [ "$src_code" = "$DETECT_CODE" ]; then
+    /usr/bin/printf '%s' "$src" > "$spool/detect.txt"
+    detected=$(detect_source_language "$spool" "$tgt_code" "$spool/detect.txt")
+    detect_rc=$?
+    /bin/rm -f "$spool/detect.txt"
+    if [ "$detect_rc" -ne 0 ]; then
+        enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
+        disable_ctrl "$STOP_BTN"
+        set_status "$detected"
+        exit 0
+    fi
+    src_code="$detected"
+fi
+note_detected_language "$spool" "$detected"
 
 # Character counter (on translate only; no per-keystroke handler in v1). wc -m under a UTF-8
 # locale counts characters regardless of the ambient LANG.
@@ -59,6 +77,10 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-set_status "Translating…"
+if [ -n "$detected" ]; then
+    set_status "Translating from $(lang_display_name "$detected")…"
+else
+    set_status "Translating…"
+fi
 
 exit 0

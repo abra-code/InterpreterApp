@@ -134,6 +134,27 @@ public enum LanguageTag {
         }
     }
 
+    /// Like `normalize`, but a script subtag survives: `zh-Hant` stays `zh-Hant`, `zh_hans_CN`
+    /// becomes `zh-Hans`. Without one it is exactly `normalize`.
+    ///
+    /// For a caller that has to pick between two entries the script tells apart. Interpreter
+    /// lists Chinese (Simplified) and Chinese (Traditional) as separate languages, and the
+    /// recognizer separates them cleanly - six characters of either came back 1.000 against
+    /// 0.000 - so folding them into "zh" would throw away an answer that was already right.
+    /// On very short text the two scripts split the mass (two characters: 0.47 against 0.38), which
+    /// is why `LanguageDetector.identify` picks the language, and judges its confidence, by the
+    /// scripts' combined score before naming the stronger script.
+    /// The region is still dropped: nothing here tells pt-BR from pt-PT.
+    public static func normalizeKeepingScript(_ raw: String) -> String? {
+        guard let primary = normalize(raw) else { return nil }
+        let subtags = raw.trimmingCharacters(in: CharacterSet(charactersIn: " \t\n\r\"'`.,;:!?()[]{}"))
+            .split(whereSeparator: { $0 == "-" || $0 == "_" }).dropFirst()
+        // BCP-47: the script is the four-letter subtag right after the language, title-cased.
+        guard let script = subtags.first, script.count == 4, script.allSatisfy({ $0.isLetter })
+        else { return primary }
+        return primary + "-" + script.prefix(1).uppercased() + script.dropFirst().lowercased()
+    }
+
     /// The English name for a code, for printing. Nil when the code names nothing.
     public static func englishName(_ code: String) -> String? {
         Locale(identifier: "en_US").localizedString(forLanguageCode: code)

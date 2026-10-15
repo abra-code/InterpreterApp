@@ -9,6 +9,8 @@ Two modes:
 - Text window: type or paste text, pick From/To languages, translate.
 - Document window: pick/drop a document; Interpreter converts it to plain text, translates it, and writes a `<name>-<language>.txt` next to the original (`report.txt` translated into Polish becomes `report-pl.txt`), so several target languages leave several files.
 
+The From picker starts with "Detect language" (the default on a first launch): Interpreter names the source language from the text itself, on-device, and the status line says what it found ("Translating from Polish"). Text it cannot place with confidence - a single word such as "Hello" - or text already in the To language is not translated; the status line says why, and choosing the From language yourself always works.
+
 ## On-device by design
 
 Everything the app does to your text and documents runs on this Mac:
@@ -45,7 +47,7 @@ Notes:
 
 ### PDF specifics and limitations
 
-PDF text is extracted page by page with the bundled `pdfutil` (github.com/abra-code/pdfutil): one `text` pass reads the text layer, and any page with no text is recognized individually with Vision OCR (`pdfutil ocr`), hinted with the selected From language. The pages are stitched back in document order, so:
+PDF text is extracted page by page with the bundled `pdfutil` (github.com/abra-code/pdfutil): one `text` pass reads the text layer, and any page with no text is recognized individually with Vision OCR (`pdfutil ocr`), hinted with the selected From language (with "Detect language", Vision detects the language itself; the document language is then detected from the extracted text). The pages are stitched back in document order, so:
 
 - Scanned / image-only PDFs translate via OCR (on-device - see above). OCR is slower than text extraction (Vision rasterizes and reads each page); the status line counts pages and Stop cancels at any point, losing at most one page of work.
 - Mixed documents - digital text with scanned inserts (a signed page, a scanned appendix) - lose nothing: text pages are extracted verbatim, scanned pages are OCR'd.
@@ -56,13 +58,13 @@ PDF text is extracted page by page with the bundled `pdfutil` (github.com/abra-c
 
 ## Source-language identification (`langid`)
 
-`Tools/langid` is a small first-party helper that names the language of a document, so the From language can be detected instead of asked for. It is built into `Contents/Support/langid` by `update_interpreter.sh` and is usable from any script:
+`Tools/langid` is a small first-party helper that names the language of a document. It is what the From picker's "Detect language" runs (`detect_source_language` in `lib.interp.sh`, with `--keep-script --min-confidence 0.5`). It is built into `Contents/Support/langid` by `update_interpreter.sh` and is usable from any script:
 
 ```sh
 lang=$("$SUPPORT_DIR/langid" --file "$plain_text" --min-confidence 0.5) || lang=""
 ```
 
-It prints the BCP-47 primary subtag alone (`pl`), or nothing with exit 1 when it will not commit to an answer. `--json` gives every candidate with its probability.
+It prints the BCP-47 primary subtag alone (`pl`), or nothing with exit 1 when it will not commit to an answer. `--keep-script` (langid 1.1) keeps the script where the recognizer reports one, so Simplified and Traditional Chinese come back as `zh-Hans` and `zh-Hant`; NaturalLanguage tells them apart reliably even on a few characters. `--json` gives every candidate with its probability.
 
 It uses NaturalLanguage's `NLLanguageRecognizer`, not a language model. That was measured rather than assumed: Apple's on-device Foundation Models system model answers the same question with a constrained schema and agreed on every language tried, but took 260-630 ms against 3-4 ms here, requires macOS 26 with Apple Intelligence enabled, and returns a bare label instead of a probability distribution. Where a purpose-built framework already answers the question, it beats the LLM on speed, calibration and availability.
 

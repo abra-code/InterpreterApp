@@ -30,7 +30,7 @@
               "properties": {
                 "pickerStyle": "menu",
                 "labelsHidden": true,
-                "options": ["English"],
+                "options": ["Detect language"],
                 "actionID": "interp.from.changed",
                 "frame": { "minWidth": 180, "idealWidth": 220 }
               }

@@ -31,7 +31,7 @@ disable_ctrl "$TRANSLATE_BTN"
 enable_ctrl "$STOP_BTN"
 
 # Resolve the picker indices (1-based) to language codes; a stale/bogus index is surfaced.
-src_code=$(resolve_lang_code "$spool" "$from_idx")
+src_code=$(resolve_from_code "$spool" "$from_idx")
 tgt_code=$(resolve_lang_code "$spool" "$to_idx")
 if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
@@ -71,8 +71,11 @@ disable_ctrl "$REVEAL_OUTPUT_BTN"
 # With the spool and From language, a PDF goes through the page-by-page ladder: scanned
 # (text-less) pages get per-page Vision OCR hinted with the From language, with progress in
 # the status line and Stop live throughout (rc 2 = the user cancelled - not an error).
+# With Detect language there is no hint yet, so OCR starts in Vision's own auto-detect.
+ocr_hint="$src_code"
+[ "$ocr_hint" = "$DETECT_CODE" ] && ocr_hint=""
 conv="$spool/input.plain.txt"
-convert_to_plain_text "$inp" "$conv" "$spool" "$src_code"
+convert_to_plain_text "$inp" "$conv" "$spool" "$ocr_hint"
 convert_rc=$?
 
 if [ "$convert_rc" -eq 2 ]; then
@@ -103,6 +106,21 @@ if [ "$has_text_rc" -ne 0 ]; then
     exit 0
 fi
 
+# Detect language: name the source language from the converted text (langid samples the start,
+# middle and end, so a title or byline in another language does not decide it).
+detected=""
+if [ "$src_code" = "$DETECT_CODE" ]; then
+    detected=$(detect_source_language "$spool" "$tgt_code" "$conv")
+    detect_rc=$?
+    if [ "$detect_rc" -ne 0 ]; then
+        enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+        set_status "$detected"
+        exit 0
+    fi
+    src_code="$detected"
+fi
+note_detected_language "$spool" "$detected"
+
 # Publish the job from the converted text (shared with the text window): bumps the epoch, writes
 # the per-epoch source file, builds+publishes job.json, and stamps the dispatch time for timing.
 # Publishing can refuse (a raw-prompt family whose language names cannot be resolved) - restore
@@ -114,6 +132,10 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-set_status "Translating…"
+if [ -n "$detected" ]; then
+    set_status "Translating from $(lang_display_name "$detected")…"
+else
+    set_status "Translating…"
+fi
 
 exit 0

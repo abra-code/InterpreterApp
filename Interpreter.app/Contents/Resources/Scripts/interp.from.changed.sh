@@ -2,6 +2,7 @@
 # index into the CURRENT (possibly family-filtered) option list; persist the language CODE it
 # resolves to - an index would point at a different language whenever the family list changes.
 # Guard the value: programmatic option/value updates can fire this with a transitional/bogus value.
+# Row 1 is "Detect language", persisted as "auto" (see fromcodes in lib.interp.sh).
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
@@ -15,7 +16,7 @@ quiet=$(/bin/cat "$spool/lang_quiet" 2>/dev/null)
 case "$quiet" in ''|*[!0-9]*) quiet=0 ;; esac
 [ "$(/bin/date +%s)" -le "$quiet" ] && exit 0
 
-code=$(resolve_lang_code "$spool" "$idx")
+code=$(resolve_from_code "$spool" "$idx")
 [ -n "$code" ] && "$defaults_tool" write "$BUNDLE_ID" FromLang "$code"
 
 exit 0

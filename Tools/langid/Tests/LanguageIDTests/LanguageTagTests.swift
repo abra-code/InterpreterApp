@@ -31,6 +31,18 @@ struct LanguageTagTests {
         #expect(LanguageTag.normalize("zh-Hant-TW") == "zh")
     }
 
+    @Test("normalizeKeepingScript keeps a script subtag, title-cased, and drops the region")
+    func keepsScriptSubtag() {
+        #expect(LanguageTag.normalizeKeepingScript("zh-Hant") == "zh-Hant")
+        #expect(LanguageTag.normalizeKeepingScript("zh_hans_CN") == "zh-Hans")
+        #expect(LanguageTag.normalizeKeepingScript("ZH-HANT-TW") == "zh-Hant")
+        #expect(LanguageTag.normalizeKeepingScript("sr-Latn") == "sr-Latn")
+        #expect(LanguageTag.normalizeKeepingScript("pt-BR") == "pt")
+        #expect(LanguageTag.normalizeKeepingScript("pl") == "pl")
+        #expect(LanguageTag.normalizeKeepingScript("Polish") == "pl")
+        #expect(LanguageTag.normalizeKeepingScript("und") == nil)
+    }
+
     @Test("an English language name resolves to its code")
     func englishNames() {
         #expect(LanguageTag.normalize("Polish") == "pl")

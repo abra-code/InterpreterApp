@@ -43,6 +43,28 @@ struct DetectorTests {
         #expect((zh?.confidence ?? 0) > 0.9)
     }
 
+    // The opt-in opposite: a caller that lists Simplified and Traditional Chinese separately asks
+    // for the script, and gets it with the mass of each script kept apart.
+    @Test("keepScript tells Simplified from Traditional Chinese")
+    func keepsScript() {
+        let simplified = LanguageDetector.identify("我昨天去商店买面包和牛奶，但是商店已经关门了。", keepScript: true)
+        #expect(simplified.code == "zh-Hans")
+        let traditional = LanguageDetector.identify("我昨天去商店買麵包和牛奶，但是商店已經關門了。", keepScript: true)
+        #expect(traditional.code == "zh-Hant")
+        #expect((traditional.confidence ?? 0) > 0.9)
+        // Two characters split between the scripts (measured zh-Hans 0.47, zh-Hant 0.38): the
+        // language still holds the mass, so a confidence floor judges Chinese, not one script.
+        let short = LanguageDetector.identify("中文", keepScript: true)
+        #expect(short.code == "zh-Hans" || short.code == "zh-Hant")
+        #expect((short.confidence ?? 0) > 0.7)
+        #expect(short.hypotheses.contains { $0.code == "zh-Hant" })
+        // Languages without a script subtag are unaffected.
+        #expect(
+            LanguageDetector.identify(
+                "Anoche fui a la tienda a comprar pan y leche, pero ya estaba cerrada.", keepScript: true
+            ).code == "es")
+    }
+
     @Test("hypotheses are ranked best first")
     func hypothesesRanked() {
         let result = LanguageDetector.identify(

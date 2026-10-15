@@ -148,7 +148,7 @@ sync_models() {
 # populate_language_pickers records the family it populated for (spool/langfamily). When a
 # model switch (user pick, post-download auto-pickup) lands on a DIFFERENT family, re-populate
 # so the pickers only offer languages the new model supports. Selections survive by saved code;
-# a code the new family lacks falls back to en/es inside the populate.
+# a code the new family lacks falls back inside the populate (From to Detect language, To to es).
 sync_languages() {
     [ "$IS_TRANSFORM" = 1 ] && return 0
     local _fam=$(model_family_of "$(/bin/cat "$spool/model.dir" 2>/dev/null)")
@@ -255,6 +255,14 @@ reflect_ui() {
     [ "$_sig" = "$LAST_UI_SIG" ] && return 0
     LAST_UI_SIG="$_sig"
 
+    # A source language found by Detect language ("from Polish"), written by the Translate handler
+    # before it published the job and removed for a job whose From language was chosen.
+    local _from_note=""
+    if [ "$IS_TRANSFORM" != 1 ] && [ -f "$spool/from.detected" ]; then
+        _from_note=" from $(/bin/cat "$spool/from.detected" 2>/dev/null)"
+        [ "$_from_note" = " from " ] && _from_note=""
+    fi
+
     # Display helpers: tok/s as an integer, ETA seconds as "24s" / "1m 20s".
     local _tpsN=""
     case "$_tps" in ''|*[!0-9.]*) : ;; *) _tpsN=$(/usr/bin/awk -v x="$_tps" 'BEGIN{ printf "%.0f", x }') ;; esac
@@ -298,9 +306,10 @@ reflect_ui() {
             local _base _tail=""
             if [ "$_tn" -ge 2 ]; then
                 _cur=$(( _cn + 1 )); [ "$_cur" -gt "$_tn" ] && _cur="$_tn"
-                _base="$VERB_ING chunk $_cur of $_tn"
+                _base="$VERB_ING$_from_note, chunk $_cur of $_tn"
+                [ -n "$_from_note" ] || _base="$VERB_ING chunk $_cur of $_tn"
             else
-                _base="$VERB_ING"
+                _base="$VERB_ING$_from_note"
             fi
             [ -n "$_etaTxt" ] && _tail=" — $_etaTxt"
             [ -n "$_tpsN" ] && _tail="$_tail ($_tpsN tok/s)"
@@ -323,8 +332,8 @@ reflect_ui() {
             fi
             # "Ready (translated in <wall time>, <decode speed>)".
             local _dtail=""
-            if [ -n "$_es" ] && [ -n "$_tpsN" ]; then _dtail=" ($VERB_PAST in $_es, $_tpsN tok/s)"
-            elif [ -n "$_es" ]; then _dtail=" ($VERB_PAST in $_es)"
+            if [ -n "$_es" ] && [ -n "$_tpsN" ]; then _dtail=" ($VERB_PAST$_from_note in $_es, $_tpsN tok/s)"
+            elif [ -n "$_es" ]; then _dtail=" ($VERB_PAST$_from_note in $_es)"
             elif [ -n "$_tpsN" ]; then _dtail=" ($_tpsN tok/s)"
             fi
             set_status "Ready$_dtail" ;;

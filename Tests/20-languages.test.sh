@@ -101,14 +101,14 @@ switch_model "$hy"
 # change handlers do not persist them: switching to a family that lacks the
 # saved language MASKS the preference for the session instead of erasing it.
 check "the saved From is untouched in preferences" "af" "$(pref FromLang)"
-from_code="$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
-check "but the picker fell back to a supported language" "en" "$from_code"
+from_code="$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+check "but the picker fell back to Detect language" "auto" "$from_code"
 check "and the supported To was honored" "de" \
     "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$TO_PICKER")")"
 # Switching back restores it, which is the point of masking rather than erasing.
 switch_model "$tg"
 check "switching back restores the saved language" "af" \
-    "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+    "$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
 
 section "a legacy index preference is migrated to a code, once"
 reset_document
@@ -139,8 +139,8 @@ reset_document
 pref_set FromIndex "not-a-number"
 interp_call populate_language_pickers "$(spool_dir)" >/dev/null 2>&1
 check "nothing was migrated" "" "$(pref FromLang)"
-check "and the picker still landed on English" "en" \
-    "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+check "and the picker landed on Detect language, the first-launch default" "auto" \
+    "$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
 
 section "resolve_lang_code refuses anything that is not a row number"
 prepare_for_model "$tg"

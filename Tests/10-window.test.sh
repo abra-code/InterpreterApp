@@ -97,14 +97,18 @@ check "and re-populating with a model records its family" "translategemma" "$(la
 # in the same order or every picker index resolves to the wrong language.
 first_name="$(LC_ALL=C /usr/bin/sort -f "$APP_RESOURCES/languages.tsv" | /usr/bin/sed -n '1p' | /usr/bin/cut -f1)"
 first_code="$(LC_ALL=C /usr/bin/sort -f "$APP_RESOURCES/languages.tsv" | /usr/bin/sed -n '1p' | /usr/bin/cut -f2)"
-check "the options start with the alphabetically first name" "yes" \
-    "$(contains "$(ui_prop "$FROM_PICKER" options)" "[\"$first_name\"")"
+check "the To options start with the alphabetically first name" "yes" \
+    "$(contains "$(ui_prop "$TO_PICKER" options)" "[\"$first_name\"")"
+check "the From options are the same with Detect language in front" "yes" \
+    "$(contains "$(ui_prop "$FROM_PICKER" options)" "[\"Detect language\",\"$first_name\"")"
+check "and fromcodes holds auto first, then the To codes" "auto $(langcodes | /usr/bin/tr "\n" " ")" \
+    "$(spool_file fromcodes | /usr/bin/tr "\n" " ")"
 check "and langcodes line 1 is that language's code" "$first_code" \
     "$(langcodes | /usr/bin/sed -n 1p)"
 check "row 1 resolves back to it" "$first_code" "$(interp_call resolve_lang_code "$(spool_dir)" 1)"
-# With nothing saved the defaults are English -> Spanish, chosen by CODE.
-check "From defaults to English" "en" \
-    "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+# With nothing saved (a first launch) From is Detect language and To is Spanish, chosen by CODE.
+check "From defaults to Detect language" "auto" \
+    "$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
 check "To defaults to Spanish"   "es" \
     "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$TO_PICKER")")"
 
@@ -114,7 +118,7 @@ pref_set FromLang de
 pref_set ToLang fr
 omc_run interp.window.init
 check "From came back as German" "de" \
-    "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+    "$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
 check "To came back as French"   "fr" \
     "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$TO_PICKER")")"
 
@@ -131,7 +135,7 @@ omc_run interp.window.init
 check "the quiet window closes on its own" "yes" \
     "$(omc_wait_for '[ "$(/bin/date +%s)" -gt "$(/bin/cat '"$(spool_dir)"'/lang_quiet 2>/dev/null || echo 0)" ]' 5 \
         && echo yes || echo no)"
-de_row="$(interp_call lang_code_index "$(spool_dir)" de)"
+de_row="$(interp_call from_code_index "$(spool_dir)" de)"
 omc_fire interp.from.changed "$FROM_PICKER" "$de_row"
 check "From was saved as a code" "de" "$(pref FromLang)"
 it_row="$(interp_call lang_code_index "$(spool_dir)" it)"
@@ -148,7 +152,7 @@ omc_run interp.window.init
 # fallback fires them with a DIFFERENT language than the one saved, so honoring
 # it here would erase the preference rather than masking it for the session.
 pref_set FromLang de
-pl_row="$(interp_call lang_code_index "$(spool_dir)" pl)"
+pl_row="$(interp_call from_code_index "$(spool_dir)" pl)"
 omc_fire interp.from.changed "$FROM_PICKER" "$pl_row"
 check "the saved preference stands" "de" "$(pref FromLang)"
 
@@ -166,7 +170,7 @@ omc_fire interp.from.changed "$FROM_PICKER" "99999"
 check "an out-of-range index changes nothing either" "de" "$(pref FromLang)"
 # The positive control: the same handler DOES persist a good value, so the two
 # checks above are not passing because the handler is inert.
-es_row="$(interp_call lang_code_index "$(spool_dir)" es)"
+es_row="$(interp_call from_code_index "$(spool_dir)" es)"
 omc_fire interp.from.changed "$FROM_PICKER" "$es_row"
 check "but a valid index is persisted" "es" "$(pref FromLang)"
 
@@ -176,16 +180,16 @@ make_mlx_model "translategemma-12b-4bit" >/dev/null
 omc_control_defaults interpreter.window
 omc_run interp.window.init
 omc_wait_for '[ "$(/bin/date +%s)" -gt "$(/bin/cat '"$(spool_dir)"'/lang_quiet 2>/dev/null || echo 0)" ]' 5
-from_row="$(interp_call lang_code_index "$(spool_dir)" en)"
-to_row="$(interp_call lang_code_index "$(spool_dir)" ja)"
-omc_control "$FROM_PICKER" "$from_row"
-omc_control "$TO_PICKER" "$to_row"
+omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" en)"
+omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" ja)"
 omc_control "$SRC_EDITOR" ""
 omc_control "$TGT_EDITOR" ""
 omc_trigger "$SWAP_BTN"
 omc_run interp.swap
-check "the From picker took the To row" "$to_row"   "$(ui_value "$FROM_PICKER")"
-check "and the To picker the From row"  "$from_row" "$(ui_value "$TO_PICKER")"
+# By language, not by row: the From list has Detect language in front, so Japanese sits one row
+# lower there than in To.
+check "From became Japanese" "ja" "$(interp_call resolve_from_code "$(spool_dir)" "$(ui_value "$FROM_PICKER")")"
+check "and To English"        "en" "$(interp_call resolve_lang_code "$(spool_dir)" "$(ui_value "$TO_PICKER")")"
 check "the swap was persisted as codes, From" "ja" "$(pref FromLang)"
 check "and To"                                "en" "$(pref ToLang)"
 
@@ -218,7 +222,7 @@ make_mlx_model "translategemma-12b-4bit" >/dev/null
 omc_control_defaults interpreter.window
 omc_run interp.window.init
 printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
-en_row="$(interp_call lang_code_index "$(spool_dir)" en)"
+en_row="$(interp_call from_code_index "$(spool_dir)" en)"
 de_row="$(interp_call lang_code_index "$(spool_dir)" de)"
 omc_control "$FROM_PICKER" "$en_row"
 omc_control "$TO_PICKER" "$de_row"
@@ -286,7 +290,7 @@ make_mlx_model "translategemma-12b-4bit" >/dev/null
 omc_control_defaults interpreter.window
 omc_run interp.window.init
 printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
-omc_control "$FROM_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
+omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" en)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" de)"
 omc_control "$SRC_EDITOR" "Held by the lock"
 # The Translate button and its Cmd+Return shortcut are two trigger paths and

@@ -33,6 +33,8 @@ SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
 # overrides exist for the test suite in ../Tests.
 AGENT_BIN="${INTERP_AGENT_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/MLX/mlx-agent}"
 PDFUTIL_BIN="${INTERP_PDFUTIL_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/pdfutil}"
+# Source-language identification (Tools/langid in this repo, NaturalLanguage-based, milliseconds).
+LANGID_BIN="${INTERP_LANGID_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/langid}"
 # llama.cpp engine for GGUF models (provisioned by update_interpreter.sh --with-llama; dylibs
 # sit beside the binary). Absent in an MLX-only build - gguf models then fail to spawn cleanly.
 LLAMA_SERVER_BIN="${INTERP_LLAMA_SERVER_BIN:-$OMC_APP_BUNDLE_PATH/Contents/Support/Llama.cpp/llama-server}"
@@ -419,6 +421,100 @@ resolve_lang_code() {   # $1 = spool, $2 = 1-based index
     /usr/bin/sed -n "${2}p" "$1/langcodes"
 }
 
+# --- Detect language: the From picker's first option ---------------------------------------
+#
+# The From picker offers "Detect language" above the languages, so its list is the To list with
+# one row in front. Its codes live in their own file, fromcodes ("auto" then langcodes), and From
+# indices resolve through it; a From index and a To index for the same language differ by one.
+# "auto" is also what the FromLang preference holds while Detect is chosen.
+#
+# Detection itself is the bundled langid (NaturalLanguage, a few milliseconds). Below
+# DETECT_MIN_CONFIDENCE it gives no answer rather than a guess - measured: ordinary phrases such
+# as "Thank you", "Gracias" or "Wie geht's?" score 0.8-1.0, while a lone "Hello" scores 0.13 and
+# "OK" comes back as Polish at 0.29.
+DETECT_CODE="auto"
+DETECT_LABEL="Detect language"
+DETECT_MIN_CONFIDENCE="0.5"
+
+resolve_from_code() {   # $1 = spool, $2 = 1-based From index
+    case "$2" in ''|*[!0-9]*) return 0 ;; esac
+    /usr/bin/sed -n "${2}p" "$1/fromcodes"
+}
+
+from_code_index() {   # $1 = spool, $2 = code
+    /usr/bin/grep -n "^${2}\$" "$1/fromcodes" 2>/dev/null | /usr/bin/head -1 | /usr/bin/cut -d: -f1
+}
+
+# Display name of a language code, from languages.tsv ("Polish"); empty for an unknown code.
+lang_display_name() {   # $1 = code
+    [ -n "$1" ] || return 0
+    /usr/bin/awk -F'\t' -v c="$1" '$2 == c { print $1; exit }' "$RESOURCES_DIR/languages.tsv" 2>/dev/null
+}
+
+# The language a plain-text file is written in, as one of the app's language codes.
+# Prints the code and returns 0; otherwise prints a sentence for the status line and returns 1.
+#
+# langid answers with the language subtag ("pl"), plus the script where the recognizer reports one
+# ("zh-Hant", with --keep-script; a langid older than 1.1 ignores the flag and says "zh"). The app
+# lists some languages twice by variant - Portuguese (Brazil) and (Portugal), and Chinese without a
+# script from an older langid - so an answer is matched exactly first, then by its language subtag.
+# Among variants the first that is NOT the To language wins: Portuguese text with To set to
+# Portuguese (Brazil) is then translated as Portuguese (Portugal) into Brazilian, which is the only
+# reading of that request that does something, instead of being refused as "already Portuguese".
+#
+# The checks after the match are the reasons a detected language cannot be used: the app does not
+# offer it, the selected model does not translate it (the family's filtered langcodes), or it is
+# the To language already.
+detect_source_language() {   # $1 = spool, $2 = To code, $3 = plain-text file
+    local _spool="$1" _to="$2"
+    # A build without the helper must not read as "this text is unclear".
+    if [ ! -x "$LANGID_BIN" ]; then
+        /usr/bin/printf '%s' "Language detection is missing from this copy of Interpreter. Choose the language under From."
+        return 1
+    fi
+    local _raw
+    _raw=$("$LANGID_BIN" --keep-script --min-confidence "$DETECT_MIN_CONFIDENCE" --file "$3" 2>/dev/null)
+    _raw=$(/usr/bin/printf '%s' "$_raw" | /usr/bin/head -1 | /usr/bin/tr -cd 'A-Za-z-')
+    if [ -z "$_raw" ]; then
+        /usr/bin/printf '%s' "Could not tell which language this is. Choose it under From."
+        return 1
+    fi
+
+    local _code=$(/usr/bin/grep -x -F -m 1 -e "$_raw" "$_spool/langcodes.all" 2>/dev/null)
+    if [ -z "$_code" ]; then
+        local _prim="${_raw%%-*}"
+        local _variants=$(/usr/bin/grep -e "^${_prim}\$" -e "^${_prim}-" "$_spool/langcodes.all" 2>/dev/null)
+        _code=$(/usr/bin/printf '%s\n' "$_variants" | /usr/bin/grep -v -x -F -e "$_to" | /usr/bin/head -1)
+        [ -n "$_code" ] || _code=$(/usr/bin/printf '%s\n' "$_variants" | /usr/bin/head -1)
+    fi
+    if [ -z "$_code" ]; then
+        /usr/bin/printf 'This text looks like a language Interpreter does not translate (%s). Choose it under From.' "$_raw"
+        return 1
+    fi
+
+    local _name=$(lang_display_name "$_code")
+    local _row=$(lang_code_index "$_spool" "$_code")
+    if [ -z "$_row" ]; then
+        /usr/bin/printf '%s' "This text is in $_name, which the selected model does not translate."
+        return 1
+    fi
+    if [ "$_code" = "$_to" ]; then
+        /usr/bin/printf '%s' "This text is already in $_name. Choose another To language."
+        return 1
+    fi
+    /usr/bin/printf '%s' "$_code"
+}
+
+# Note the detected source language for the poller's status line ("Translating from Polish"), or
+# clear the note for a job whose From language was chosen. Written before the job is published.
+note_detected_language() {   # $1 = spool, $2 = detected code ("" = none)
+    if [ -n "$2" ]; then
+        /usr/bin/printf '%s' "$(lang_display_name "$2")" > "$1/from.detected"
+    else
+        /bin/rm -f "$1/from.detected"
+    fi
+}
+
 # Populate the From/To language pickers for the CURRENT model family and restore the saved
 # selection. The list is sorted alphabetically by display name (the shipped TSV stays the source
 # of truth): we sort a copy into a temp file first (not a "sort | while" pipe) so the loop runs in
@@ -433,8 +529,8 @@ resolve_lang_code() {   # $1 = spool, $2 = 1-based index
 # persist as language CODES (FromLang/ToLang defaults keys) - an index would silently point at a
 # different language whenever the family list changes. Legacy FromIndex/ToIndex values (1-based
 # rows of the full sorted list, reproduced in langcodes.all) are migrated here, one-shot, by
-# writing the resolved code. A saved code absent from the current family's list falls back to
-# en/es by code (then row 1) WITHOUT persisting the fallback: the programmatic picker sets below
+# writing the resolved code. A saved code absent from the current family's list falls back - From
+# to Detect language, To to es (then row 1) - WITHOUT persisting the fallback: the picker sets below
 # are wrapped in a lang_quiet window that the change handlers honor, so switching to a family
 # that lacks the saved language masks the preference for the session instead of erasing it -
 # switching back restores it.
@@ -449,6 +545,7 @@ populate_language_pickers() {   # $1 = spool
     local _name _code _legacy
     LC_ALL=C /usr/bin/sort -f "$RESOURCES_DIR/languages.tsv" > "$_sorted"
     /bin/rm -f "$_spool/langcodes" "$_spool/langcodes.all"
+    /usr/bin/printf '%s\n' "$DETECT_CODE" > "$_spool/fromcodes"
     while IFS="$_tab" read -r _name _code; do
         [ -n "$_name" ] || continue
         [ -n "$_code" ] || continue
@@ -459,11 +556,15 @@ populate_language_pickers() {   # $1 = spool
         if [ "$_first" = 1 ]; then _first=0; else _opts="$_opts,"; fi
         _opts="$_opts\"$_name\""
         /usr/bin/printf '%s\n' "$_code" >> "$_spool/langcodes"
+        /usr/bin/printf '%s\n' "$_code" >> "$_spool/fromcodes"
     done < "$_sorted"
     _opts="$_opts]"
     /usr/bin/printf '%s' "$_family" > "$_spool/langfamily"
 
-    "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_opts"
+    local _from_opts="[\"$DETECT_LABEL\"]"
+    [ "$_opts" = "[]" ] || _from_opts="[\"$DETECT_LABEL\",${_opts#[}"
+    # The From list is the same with "Detect language" in front (see fromcodes above).
+    "$dialog" "$window_uuid" "$FROM_PICKER" omc_set_property "options" "$_from_opts"
     "$dialog" "$window_uuid" "$TO_PICKER" omc_set_property "options" "$_opts"
 
     local _from_code=$("$defaults_tool" read "$BUNDLE_ID" FromLang 2>/dev/null)
@@ -479,12 +580,13 @@ populate_language_pickers() {   # $1 = spool
         [ -n "$_to_code" ] && "$defaults_tool" write "$BUNDLE_ID" ToLang "$_to_code"
     fi
 
-    local _from=$(lang_code_index "$_spool" "$_from_code")
-    [ -n "$_from" ] || _from=$(lang_code_index "$_spool" en)
+    # No saved From (a first launch), or a saved language this family does not translate: Detect
+    # language, row 1, which every family offers.
+    local _from=$(from_code_index "$_spool" "$_from_code")
     case "$_from" in ''|*[!0-9]*) _from=1 ;; esac
     local _to=$(lang_code_index "$_spool" "$_to_code")
     [ -n "$_to" ] || _to=$(lang_code_index "$_spool" es)
-    case "$_to" in ''|*[!0-9]*) _to=$_from ;; esac
+    case "$_to" in ''|*[!0-9]*) _to=1 ;; esac
 
     # The To language as a CODE, for handlers that need it without a picker value in hand: the
     # document window names its output file after it, and the sets below are made inside the quiet

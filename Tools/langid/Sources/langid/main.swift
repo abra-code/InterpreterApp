@@ -16,7 +16,7 @@
 import Foundation
 import LanguageID
 
-let version = "1.0"
+let version = "1.1"
 
 func usage() {
     let text = """
@@ -37,12 +37,18 @@ func usage() {
                                    decide the answer on its own.
           --min-confidence <0..1>  refuse to answer below this (default 0, answer anything).
                                    Use it when a wrong guess is worse than no guess.
+          --keep-script            keep the script subtag where the recognizer reports one,
+                                   so Simplified and Traditional Chinese come back as
+                                   "zh-Hans" and "zh-Hant" rather than both as "zh". The
+                                   language is still chosen, and --min-confidence
+                                   judged, by the scripts' combined score
           --json                   full record: every candidate with its probability
           --version                print "langid <version>" and exit 0
 
         OUTPUT:
           By default the BCP-47 primary language subtag alone, e.g. "pl". Script and region are
-          dropped: pl-PL and pl are one language for picking a translation target.
+          dropped: pl-PL and pl are one language for picking a translation target. With
+          --keep-script the script stays (zh-Hant); the region is dropped either way.
 
         EXIT STATUS:
           0  a language was identified
@@ -153,7 +159,8 @@ if let text = option("--text") {
 
 // MARK: - Identify and report
 
-let result = LanguageDetector.identify(source, maxCharacters: maxChars)
+let result = LanguageDetector.identify(
+    source, maxCharacters: maxChars, keepScript: args.contains("--keep-script"))
 
 // Below the caller's floor is reported as no answer, not as a weak one: the whole point of
 // --min-confidence is that the caller would rather have nothing than a guess.

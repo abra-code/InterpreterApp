@@ -13,6 +13,8 @@
 #   llama-server      the same, plus a listening socket
 #   pdfutil           safe in principle, but the OCR path is slow and its
 #                     answers are what several tests need to control
+#   langid            safe and fast, but a real answer depends on the macOS
+#                     NaturalLanguage model, and on the binary being built at all
 #   interp.poll.sh    an unbounded poll loop that owns the broker AND keeps
 #   interp.models.load.sh    writing into the window - left running for real it
 #   interp.models.poll.sh    would race every assertion in the file
