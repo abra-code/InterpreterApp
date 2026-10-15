@@ -18,7 +18,13 @@ set -uo pipefail
 
 GREEN=$(printf '\033[92m'); RED=$(printf '\033[91m'); YELLOW=$(printf '\033[93m'); RESET=$(printf '\033[0m')
 
-CONFIG="Debug"
+# Release by default: this deploys the agent users run, so it is built -O / wholemodule. A Debug
+# default meant one forgotten flag shipped an -Onone build. --debug (or --config=Debug) is for
+# iterating on the agent itself.
+CONFIG="Release"
+# Re-resolve mlx-agent's SPM dependencies to the newest allowed versions before building it
+# (see step 1). --skip-agent-package-update builds against its committed Package.resolved.
+DO_AGENT_PACKAGE_UPDATE="yes"
 ARCH="auto"
 SIGNING_IDENTITY="-"
 DO_BUILD="yes"
@@ -38,7 +44,10 @@ PDFUTIL_REPO="${PDFUTIL_REPO:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --config=*) CONFIG="${1#*=}" ;;
+        # Back-compat: Release is the default now, so this asks for the default.
         --release) CONFIG="Release" ;;
+        --debug) CONFIG="Debug" ;;
+        --skip-agent-package-update) DO_AGENT_PACKAGE_UPDATE="no" ;;
         --arch=*) ARCH="${1#*=}" ;;
         --agent-repo=*) AGENT_REPO="${1#*=}" ;;
         --skip-build) DO_BUILD="no" ;;
@@ -50,7 +59,12 @@ while [ $# -gt 0 ]; do
         --with-llama) DO_LLAMA="yes" ;;
         --llama-version=*) LLAMA_VERSION="${1#*=}"; LLAMA_VERSION_EXPLICIT="yes" ;;
         --help)
-            echo "Usage: $0 [--release] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--identity=CERT] [--no-codesign] [--skip-llama] [--llama-version=bNNNN|latest|nightly]"
+            echo "Usage: $0 [--debug] [--arch=arm64|x86_64] [--agent-repo=PATH] [--skip-build] [--skip-agent-package-update] [--identity=CERT] [--no-codesign] [--skip-llama] [--llama-version=bNNNN|latest|nightly]"
+            echo "  --debug          build mlx-agent Debug (-Onone) instead of Release, the default; for"
+            echo "                   iterating on the agent, never for shipping"
+            echo "  --skip-agent-package-update"
+            echo "                   build mlx-agent against its committed Package.resolved instead of"
+            echo "                   re-resolving its SPM dependencies to the newest allowed versions"
             echo "  --skip-llama     leave Contents/Support/Llama.cpp untouched (llama.cpp is provisioned by default)"
             echo "  --llama-version  which llama.cpp build to deploy. Takes:"
             echo "                   latest   upstream's newest official release, resolved to the"
@@ -239,7 +253,29 @@ fi
 # ── 1. Build mlx-agent ────────────────────────────────────────────────────
 if [ "$DO_BUILD" = "yes" ]; then
     /usr/bin/xcrun --find metal >/dev/null 2>&1 || fail "Metal toolchain missing. Install once: xcodebuild -downloadComponent MetalToolchain"
-    echo "  Building mlx-agent (compiles Metal shaders)..."
+    # Re-resolve to the newest versions mlx-agent's project.yml allows, so a deploy never quietly
+    # carries a months-old MLX because Package.resolved froze it. The work is mlx-agent's own
+    # tools/resolve_latest_packages.sh (shared with Cadabra's update script): it clears the stale
+    # build/SourcePackages checkouts that otherwise make the resolve go DOWNWARD, restores the
+    # pins on failure or Ctrl-C, and lists any direct dependency a version range still holds
+    # back. A pin change lands as a git diff in the mlx-agent repo, to review and commit there.
+    _resolved="$AGENT_REPO/mlx-agent.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+    if [ "$DO_AGENT_PACKAGE_UPDATE" = "yes" ]; then
+        _resolve_tool="$AGENT_REPO/tools/resolve_latest_packages.sh"
+        [ -x "$_resolve_tool" ] || fail "No $_resolve_tool - update the mlx-agent checkout, or re-run with --skip-agent-package-update to build against the committed pins."
+        "$_resolve_tool"
+        _resolve_status=$?
+        # 128+N: interrupted; the tool has already restored the pins.
+        [ "$_resolve_status" -gt 128 ] && exit "$_resolve_status"
+        [ "$_resolve_status" -eq 0 ] || fail "Re-resolving mlx-agent's packages failed (its message above says what became of Package.resolved). Re-run with --skip-agent-package-update to build against the committed pins."
+    else
+        # Without a Package.resolved the build below resolves from scratch - i.e. performs exactly
+        # the upgrade this flag exists to prevent. Refuse rather than print the opposite of what
+        # is about to happen.
+        [ -f "$_resolved" ] || fail "--skip-agent-package-update was given, but there is no $_resolved - the build would resolve from scratch and upgrade anyway. Restore it (git -C '$AGENT_REPO' checkout -- mlx-agent.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved) or drop the flag."
+        echo "  --skip-agent-package-update: building against the committed Package.resolved"
+    fi
+    echo "  Building mlx-agent $CONFIG (compiles Metal shaders)..."
     ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -project mlx-agent.xcodeproj -scheme mlx-agent \
         -destination "platform=macOS,arch=$ARCH" -derivedDataPath build \
         -configuration "$CONFIG" -skipPackagePluginValidation -skipMacroValidation build ) \

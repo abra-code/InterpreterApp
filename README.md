@@ -89,7 +89,7 @@ The runtime binaries under `Contents/Support` are git-excluded build artifacts, 
 
 Before signing, the script checks that every bundled third-party payload has its license notice beside it and refuses to continue otherwise - `mlx-agent` and the MLX resource bundles, `pdfutil`, and `Contents/Support/Llama.cpp` each have to carry one.
 
-The app is Apple Silicon only: the script thins every universal Mach-O in the bundle (the OMC executable and Abracode.framework arrive universal from the AppletBuilder template) to the target arch before ad-hoc codesigning and re-sealing the app. Run `./update_interpreter.sh` (see `--help` for `--release`, `--arch`, `--skip-build`, `--identity`, `--with-llama`).
+The app is Apple Silicon only: the script thins every universal Mach-O in the bundle (the OMC executable and Abracode.framework arrive universal from the AppletBuilder template) to the target arch before ad-hoc codesigning and re-sealing the app. Run `./update_interpreter.sh` (see `--help` for `--debug`, `--arch`, `--skip-build`, `--skip-agent-package-update`, `--identity`, `--skip-llama`). It builds mlx-agent Release by default and first re-resolves mlx-agent's packages to the newest versions its `project.yml` allows (via mlx-agent's `tools/resolve_latest_packages.sh`); a pin change shows up as a `Package.resolved` diff in the mlx-agent repo, to review and commit there.
 
 ## Layout
 
