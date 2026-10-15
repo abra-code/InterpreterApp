@@ -31,6 +31,18 @@
         "role": "user"
       }
     ],
+    "reduce": {
+      "messages": [
+        {
+          "content": "Summarize the text the user sends. Write the summary in the same language as the text. Cover the main points in the order that matters most to a reader, in one to three short paragraphs of plain prose, no headings and no bullet points, and at most 200 words (or 400 characters for Chinese or Japanese). Use only what the text says: do not add facts, numbers, dates or names that are not in it, and do not explain or comment. Keep the numbers, dates and names you mention exactly as the text gives them. Return only the summary: no preamble and no title.",
+          "role": "system"
+        },
+        {
+          "content": "{{chunk}}",
+          "role": "user"
+        }
+      ]
+    },
     "output": "stitch"
   }
 }

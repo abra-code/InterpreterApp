@@ -154,14 +154,13 @@ check "from the real repo" "yes" "$(contains "$info_md" "ggml-org/gemma-4-12B-it
 check "under Apache 2.0" "yes" "$(contains "$info_md" "Apache License")"
 check "not the Gemma Terms of Use" "no" "$(contains "$info_md" "Gemma Terms of Use")"
 
-section "Summarize runs on Gemma 4 in one pass, and checks only for numbers it added"
+section "Summarize runs on Gemma 4, in one pass up to the chunk budget, and checks only for numbers it added"
 sp="$PRESETS/70-summarize.json"
 check "it is a Gemma 4 preset" "gemma4it" "$(/usr/bin/plutil -extract family raw -o - "$sp")"
 check "it is the last transform in the picker" "70-summarize.json" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/basename "$f"; done | /usr/bin/tail -1)"
-# A summary is one pass over the whole text: the chunk budget, the instructions and the longest
-# answer must all fit in the server's context, or a long text is cut into parts that are each
-# summarized on their own.
+# A text up to the chunk budget is summarized in one pass: the budget, the instructions and the
+# longest answer must all fit in the server's context, or an ordinary article would be cut in two.
 budget="$(/usr/bin/plutil -extract job.budget_tokens raw -o - "$sp")"
 ctx="$(/usr/bin/plutil -extract server.ctx_size raw -o - "$sp")"
 maxnew="$(/usr/bin/plutil -extract sampling.max_new_tokens raw -o - "$sp")"
@@ -213,6 +212,23 @@ omc_control "$SRC_EDITOR" "A long article about a train crash."
 omc_run interp.transform.run
 check "the status line says Summarizing" "Summarizing..." "$(ui_value "$STATUS_TEXT")"
 check "the whole text goes as one chunk budget" "12000" "$(job_field budget_tokens)"
+check "the job carries the reduce template" "{{chunk}}" \
+    "$(/usr/bin/plutil -extract reduce.messages.1.content raw -o - "$(spool_dir)/job.json" 2>/dev/null)"
+
+section "a text longer than one pass is summarized in parts, then the part summaries are summarized"
+# The broker (mlx-agent map) runs the reduce template on a text that fits in one chunk, and the job's
+# own template on each part of a longer one, then reduce on the joined part summaries. Both carry
+# the same instructions: a part summary is a summary of that part, and a broker too old to know
+# "reduce" ignores it and still summarizes - one pass, as before.
+check "the reduce template is chat turns" "system user" \
+    "$(/usr/bin/plutil -extract job.reduce.messages.0.role raw -o - "$sp") $(/usr/bin/plutil -extract job.reduce.messages.1.role raw -o - "$sp")"
+check "with the text in the user turn" "{{chunk}}" "$(/usr/bin/plutil -extract job.reduce.messages.1.content raw -o - "$sp")"
+check "and the same instructions as each part gets" \
+    "$(/usr/bin/plutil -extract job.messages.0.content raw -o - "$sp")" \
+    "$(/usr/bin/plutil -extract job.reduce.messages.0.content raw -o - "$sp")"
+check "reduce needs stitch output" "stitch" "$(/usr/bin/plutil -extract job.output raw -o - "$sp")"
+check "no other preset reduces" "70-summarize.json" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract job.reduce json -o - "$f" >/dev/null 2>&1 && /usr/bin/basename "$f"; done)"
 
 reset_document
 omctest_end
