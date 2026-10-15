@@ -71,7 +71,7 @@ section "the Transform picker lists Humanize once, and the Model picker offers b
 reset_document
 install_both
 open_transform_window
-check "Humanize appears once" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify"]' \
+check "Humanize appears once" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify","Summarize"]' \
     "$(ui_prop "$PRESET_PICKER" options)"
 check "its row stands for its first file" "$HUMANIZER_PRESET" "$(/usr/bin/head -1 "$(spool_dir)/presetfiles")"
 check "a new window starts on the Humanizer's variant" "$HUMANIZER_PRESET" "$(spool_file preset.file)"
@@ -186,7 +186,7 @@ doc="$(make_text_file report.txt 'It is worth noting that the report is long.')"
 pb_set "${INTERP_PB_PREFIX}INTERP_TDOC_INPUT_PATH" "$doc"
 omc_control_defaults transform.doc.window
 omc_run interp.tdoc.init
-check "Humanize appears once" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify"]' \
+check "Humanize appears once" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify","Summarize"]' \
     "$(ui_prop "$PRESET_PICKER" options)"
 fill_model_picker
 printf '%s' "$(model_path 1)" > "$(spool_dir)/model.dir"

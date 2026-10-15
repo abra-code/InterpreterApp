@@ -68,8 +68,8 @@ fi
 has_text_rc=$?
 if [ "$has_text_rc" -ne 0 ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
-    set_status "No text to rewrite."
-    present_alert "Nothing to rewrite" "This document has no readable text to rewrite."
+    set_status "No text in this document."
+    present_alert "No text found" "This document has no readable text."
     exit 0
 fi
 
@@ -77,11 +77,12 @@ fi
 # A switch of transform, or of model to another family (which switches the variant), in that time
 # has already restarted the broker with the NEW preset's settings, so publishing the OLD preset's
 # job now would run it on the wrong broker and save it under the old preset's name. Stop instead;
-# the user's next Rewrite uses the preset now selected.
+# the next run uses the preset now selected.
 current_preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
 if [ "$current_preset" != "$preset" ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
-    set_status "The transform or model changed while the document was being read. Click Rewrite again."
+    button="$(preset_get "$current_preset" button)"
+    set_status "The transform or model changed while the document was being read. Click ${button:-Run} again."
     exit 0
 fi
 
@@ -102,6 +103,6 @@ if [ "$publish_rc" -ne 0 ]; then
     exit 0
 fi
 
-set_status "Rewriting..."
+set_status "$(transform_status_working "$preset")..."
 
 exit 0

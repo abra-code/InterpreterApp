@@ -50,7 +50,8 @@ fi
 LAST_CHECK_EPOCH=""       # transform mode: epoch whose finished result was already checked
 
 # Transform mode: the model families the window's transform runs on (every variant's), space
-# separated. Listing them reads every preset file, so it is redone only when the preset changes.
+# separated, and the words its status line uses ("Summarizing", "summarized"). Listing the
+# families reads every preset file, so this is redone only when the preset changes.
 GROUP_PRESET="__unset__"
 GROUP_FAMS=""
 sync_group() {
@@ -59,6 +60,8 @@ sync_group() {
     [ "$_preset" = "$GROUP_PRESET" ] && return 0
     GROUP_PRESET="$_preset"
     GROUP_FAMS="$(preset_families "$_preset" | /usr/bin/tr '\n' ' ')"
+    VERB_ING="$(transform_status_working "$_preset")"
+    VERB_PAST="$(transform_status_done "$_preset")"
 }
 
 # The installed models this window can pick from, one resolved path per line, and their labels.

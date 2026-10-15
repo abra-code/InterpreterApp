@@ -67,9 +67,9 @@ check "no transform has two files for one family" "" \
 check "the files of one transform share its name, and no two transforms share one" "" \
     "$(for f in "$PRESETS"/*.json; do printf '%s %s\n' "$(/usr/bin/plutil -extract id raw -o - "$f")" "$(/usr/bin/plutil -extract name raw -o - "$f")"; done | /usr/bin/sort -u \
         | /usr/bin/awk '{ id = $1; $1 = ""; ids[id]++; names[$0]++ } END { for (i in ids) if (ids[i] > 1) print i; for (n in names) if (names[n] > 1) print n }')"
-check "every checks word is numbers, script, length or language" "" \
+check "every checks word is numbers, added-numbers, script, length or language" "" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract checks raw -o - "$f" 2>/dev/null; echo; done \
-        | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -x -e '' -e numbers -e script -e length -e language)"
+        | /usr/bin/tr " " "\n" | /usr/bin/grep -v -x -e "" -e numbers -e added-numbers -e script -e length -e language)"
 
 section "a preset can turn the length check off, and only that"
 long="$(make_text_file p.long "$(/usr/bin/awk 'BEGIN { for (i = 0; i < 30; i++) printf "Every paragraph here says something about 42 things. " }')")"
@@ -153,6 +153,66 @@ check "it is a GGUF build" "yes" "$(contains "$info_md" "GGUF build")"
 check "from the real repo" "yes" "$(contains "$info_md" "ggml-org/gemma-4-12B-it-GGUF")"
 check "under Apache 2.0" "yes" "$(contains "$info_md" "Apache License")"
 check "not the Gemma Terms of Use" "no" "$(contains "$info_md" "Gemma Terms of Use")"
+
+section "Summarize runs on Gemma 4 in one pass, and checks only for numbers it added"
+sp="$PRESETS/70-summarize.json"
+check "it is a Gemma 4 preset" "gemma4it" "$(/usr/bin/plutil -extract family raw -o - "$sp")"
+check "it is the last transform in the picker" "70-summarize.json" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/basename "$f"; done | /usr/bin/tail -1)"
+# A summary is one pass over the whole text: the chunk budget, the instructions and the longest
+# answer must all fit in the server's context, or a long text is cut into parts that are each
+# summarized on their own.
+budget="$(/usr/bin/plutil -extract job.budget_tokens raw -o - "$sp")"
+ctx="$(/usr/bin/plutil -extract server.ctx_size raw -o - "$sp")"
+maxnew="$(/usr/bin/plutil -extract sampling.max_new_tokens raw -o - "$sp")"
+check "the whole text, the instructions and the answer fit in the context" "yes" \
+    "$([ $((budget + maxnew + 1000)) -le "$ctx" ] && echo yes || echo no)"
+check "the budget is far above an ordinary article" "yes" "$([ "$budget" -ge 8000 ] && echo yes || echo no)"
+check "it is told to use only what the text says" "yes" \
+    "$(contains "$(/usr/bin/plutil -extract job.messages.0.content raw -o - "$sp")" 'Use only what the text says')"
+check "and to write in the language of the text" "yes" \
+    "$(contains "$(/usr/bin/plutil -extract job.messages.0.content raw -o - "$sp")" 'same language as the text')"
+check "its checks leave out missing numbers and length" "added-numbers script language" \
+    "$(/usr/bin/plutil -extract checks raw -o - "$sp")"
+check "its status line says summarizing" "Summarizing summarized" \
+    "$(interp_tcall transform_status_working "$sp") $(interp_tcall transform_status_done "$sp")"
+check "a preset without status words rewrites" "Rewriting rewritten" \
+    "$(interp_tcall transform_status_working "$PRESETS/20-fix-grammar.json") $(interp_tcall transform_status_done "$PRESETS/20-fix-grammar.json")"
+check "the output is named a summary" "summary" "$(interp_tcall transform_output_suffix "$sp")"
+
+section "added-numbers reports a number the summary invented, never one it left out"
+# From the spike: a summary that turned train "TLK 31101" into 31100, and one that drops most of
+# the article's numbers, as a summary should.
+article="$(make_text_file s.src 'On 3 March 2012 at 20:57 train TLK 31101 collided with train 1322. Of the 450 firefighters and 300 police officers at the scene, 16 people died.')"
+fine="$(make_text_file s.fine 'Two trains collided on 3 March 2012, killing 16 people.')"
+wrong="$(make_text_file s.wrong 'Two trains, including TLK 31100, collided on 3 March 2012, killing 16 people.')"
+check "dropped numbers are not reported" "" \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'added-numbers' "$article" "$fine")"
+check "an invented number is" "Check: 1 number is not in the original: 31100." \
+    "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'added-numbers' "$article" "$wrong")"
+check "numbers still checks both ways" "yes" \
+    "$(contains "$(/usr/bin/perl "$APP_SCRIPTS/transform_check.pl" --checks 'numbers' "$article" "$fine")" 'missing')"
+# The shell passes the preset's list on: the hyphen in added-numbers must survive the way there.
+(
+    INTERP_LANGID_BIN="$OMCTEST_WORK/no-such-langid"; export INTERP_LANGID_BIN
+    interp_tcall transform_check "$article" "$fine" "$OMCTEST_WORK/s.check1" "$sp"
+    interp_tcall transform_check "$article" "$wrong" "$OMCTEST_WORK/s.check2" "$sp"
+)
+check "through the app, a fair summary passes" "" "$(/bin/cat "$OMCTEST_WORK/s.check1")"
+check "and an invented number is caught" "Check: 1 number is not in the original: 31100." "$(/bin/cat "$OMCTEST_WORK/s.check2")"
+
+section "Summarize says so on the status line"
+reset_document
+make_transform_model gemma-4-12B-it-8bit >/dev/null
+pref_set TransformPreset summarize
+omc_control_defaults transform.window
+omc_run interp.transform.init
+check "the window opens on Summarize" "$sp" "$(spool_file preset.file)"
+check "the button says Summarize" "Summarize" "$(ui_prop "$TRANSLATE_BTN" title)"
+omc_control "$SRC_EDITOR" "A long article about a train crash."
+omc_run interp.transform.run
+check "the status line says Summarizing" "Summarizing..." "$(ui_value "$STATUS_TEXT")"
+check "the whole text goes as one chunk budget" "12000" "$(job_field budget_tokens)"
 
 reset_document
 omctest_end

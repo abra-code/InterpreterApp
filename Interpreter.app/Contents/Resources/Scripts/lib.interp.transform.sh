@@ -6,7 +6,7 @@
 # A PRESET is what the user picks ("Humanize"): one JSON file in Resources/Transformers/, named
 # <NN>-<id>.json so the file name orders the picker. It names a model FAMILY and carries everything
 # the run needs, so a new transformer is a data file, not code:
-#   id, name, family, languages, notice, output_suffix, button
+#   id, name, family, languages, notice, output_suffix, button, checks, status_working, status_done
 #   server   - llama-server flags: ctx_size, top_k, min_p, chat_template_kwargs (a JSON string)
 #   sampling - mlx-agent map flags: temperature, top_p, max_new_tokens
 #   job      - the job.json prototype exactly as the map broker reads it (prompt or messages with
@@ -271,6 +271,18 @@ preset_bare_languages() {   # $1 = preset file
         | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/sed -e 's/-[a-z]*//g'
 }
 
+# The words the status line uses for a preset's run: "Summarizing..." while it runs and "Ready
+# (summarized in 14s)" after. Optional fields status_working and status_done; a preset without them
+# rewrites.
+transform_status_working() {   # $1 = preset file
+    local _w="$(preset_get "$1" status_working)"
+    /usr/bin/printf '%s' "${_w:-Rewriting}"
+}
+transform_status_done() {   # $1 = preset file
+    local _w="$(preset_get "$1" status_done)"
+    /usr/bin/printf '%s' "${_w:-rewritten}"
+}
+
 # The suffix a preset's document output is named with ("report.pdf" -> "report-humanized.txt").
 # It takes the place the target language code has in the translator's names, so the same output
 # helpers (unique_output_path, doc_output_path_for, set_doc_output) name, memoize and uniquify it.
@@ -335,15 +347,16 @@ spawn_transform_broker() {   # $1 = spool, $2 = model dir, $3 = preset file
 # (Latin in, Chinese out or the reverse), and a result far shorter than its source. Writes a
 # one-line human summary to $3 (empty file when nothing was found). The analysis lives in
 # transform_check.pl. A preset's optional "checks" string ("numbers script length language")
-# picks which of them apply - "Make concise" is supposed to shorten - and without one all of them
-# run.
+# picks which of them apply - "Make concise" is supposed to shorten, and "Summarize" checks only
+# for added numbers ("added-numbers") because it is supposed to leave most of them out - and
+# without one all of them run.
 #
 # The language check is the shell's part: langid names the language of both texts, and when both
 # are confident and differ (Polish in, English out - the script check cannot see a switch within
 # the Latin alphabet), their names go to the Perl helper, which reports it if "language" is on.
 transform_check() {   # $1 = source file, $2 = result file, $3 = output file, [$4 = preset file]
     local _checks=""
-    [ -n "${4:-}" ] && _checks="$(preset_get "$4" checks | /usr/bin/tr -cd 'a-z ')"
+    [ -n "${4:-}" ] && _checks="$(preset_get "$4" checks | /usr/bin/tr -cd 'a-z -')"
     local _src_lang=$(transform_text_language "$1")
     local _res_lang=$(transform_text_language "$2")
     local _src_name="" _res_name=""

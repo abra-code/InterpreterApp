@@ -50,6 +50,6 @@ if [ "$rc" -ne 0 ]; then
     exit 0
 fi
 
-set_status "Rewriting..."
+set_status "$(transform_status_working "$preset")..."
 
 exit 0

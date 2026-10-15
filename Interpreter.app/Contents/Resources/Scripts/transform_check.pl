@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 # transform_check.pl - post-run check of a text transformer's output against its source.
-#   usage: perl transform_check.pl [--checks "numbers script length language"]
+#   usage: perl transform_check.pl [--checks "numbers added-numbers script length language"]
 #          [--language-change <source language> <result language>] <source file> <result file>
 # Prints one human-readable line describing what looks wrong, or nothing when the check passes.
 # Exit status is always 0 for a completed check; a non-zero exit means the files could not be read.
@@ -29,9 +29,10 @@
 #     which the script check cannot see within one alphabet. Identifying a language is langid's job,
 #     so the shell (transform_check in lib.interp.transform.sh) names both and passes them with
 #     --language-change only when they differ; this reports it unless the script check already did.
-# --checks names the checks to run: "numbers" (both number checks), "script", "length" and
-# "language"; without it all of them run. A preset whose job is to change the length
-# ("Make concise") turns off "length".
+# --checks names the checks to run: "numbers" (both number checks), "added-numbers" (only the new
+# numbers check), "script", "length" and "language"; without it all of them run. A preset whose
+# job is to change the length ("Make concise") turns off "length"; one whose job is to leave most
+# numbers out ("Summarize") asks for "added-numbers" instead of "numbers".
 use strict;
 use warnings;
 use Encode qw(decode);
@@ -82,7 +83,7 @@ while (@ARGV && $ARGV[0] =~ /^--/) {
     my $option = shift @ARGV;
     if ($option eq '--checks') {
         my $list = shift @ARGV;
-        my %asked = map { $_ => 1 } grep { /^(?:numbers|script|length|language)$/ } split ' ', (defined $list ? $list : '');
+        my %asked = map { $_ => 1 } grep { /^(?:numbers|added-numbers|script|length|language)$/ } split ' ', (defined $list ? $list : '');
         # A list naming no known check (a typo such as "lenght") runs every check rather than none:
         # silently switching the check off is the worse failure.
         %enabled = %asked if %asked;
@@ -163,7 +164,7 @@ while ($result =~ /(?<![\d\p{Latin}])(?<!\d[.,])(\d+(?:[.,]\d+)*)(?!\d)/g) {
 }
 if (!$enabled{numbers}) {
     @missing = ();
-    @added = ();
+    @added = () unless $enabled{'added-numbers'};
 }
 if (@missing) {
     my $count = scalar @missing;

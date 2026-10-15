@@ -1,0 +1,36 @@
+{
+  "id": "summarize",
+  "name": "Summarize",
+  "family": "gemma4it",
+  "button": "Summarize",
+  "notice": "Writes a summary of up to about 200 words, in the language of the text. It can mix up who did what, so check it against the text before you rely on it.",
+  "output_suffix": "summary",
+  "status_working": "Summarizing",
+  "status_done": "summarized",
+  "checks": "added-numbers script language",
+  "server": {
+    "chat_template_kwargs": "{\"enable_thinking\":false}",
+    "ctx_size": 16384,
+    "min_p": 0,
+    "top_k": 64
+  },
+  "sampling": {
+    "max_new_tokens": 1024,
+    "temperature": 0.3,
+    "top_p": 0.95
+  },
+  "job": {
+    "budget_tokens": 12000,
+    "messages": [
+      {
+        "content": "Summarize the text the user sends. Write the summary in the same language as the text. Cover the main points in the order that matters most to a reader, in one to three short paragraphs of plain prose, no headings and no bullet points, and at most 200 words (or 400 characters for Chinese or Japanese). Use only what the text says: do not add facts, numbers, dates or names that are not in it, and do not explain or comment. Keep the numbers, dates and names you mention exactly as the text gives them. Return only the summary: no preamble and no title.",
+        "role": "system"
+      },
+      {
+        "content": "{{chunk}}",
+        "role": "user"
+      }
+    ],
+    "output": "stitch"
+  }
+}

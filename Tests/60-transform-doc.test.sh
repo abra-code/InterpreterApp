@@ -57,7 +57,7 @@ check "the window is in transform-doc mode" "transform-doc" "$(spool_file mode)"
 wait_for_calls interp.poll.sh 1
 # The mode makes the shared poller run the transform model logic AND write the result to a file.
 check "and the poller was told so" "transform-doc" "$(fake_arg_at interp.poll.sh 3)"
-check "the Transform picker is filled" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify"]' \
+check "the Transform picker is filled" '["Humanize","Fix grammar","Make formal","Make casual","Make concise","Simplify","Summarize"]' \
     "$(ui_prop "$PRESET_PICKER" options)"
 check "the output is named after the preset" "$OMCTEST_WORK/report-humanized.txt" "$(output_path)"
 check "and shown" "$OMCTEST_WORK/report-humanized.txt" "$(ui_value "$OUTPUT_PATH_TEXT")"
@@ -148,8 +148,8 @@ doc="$(make_text_file blank.txt '
 open_tdoc_window "$doc"
 omc_run interp.tdoc.run
 check_absent "nothing was published" "$(spool_dir)/job.json"
-check "the status line says why" "No text to rewrite." "$(ui_value "$STATUS_TEXT")"
-check "and the user was told" "Nothing to rewrite" "$(ui_alert_title)"
+check "the status line says why" "No text in this document." "$(ui_value "$STATUS_TEXT")"
+check "and the user was told" "No text found" "$(ui_alert_title)"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 check "and Stop went off" "0" "$(ui_enabled "$STOP_BTN")"
 
@@ -282,7 +282,7 @@ omc_run interp.tdoc.run
 INTERP_PDFUTIL_BIN="$saved_pdfutil"; export INTERP_PDFUTIL_BIN
 check "(the fake really switched the preset)" "$TEST_PRESETS/20-plain.json" "$(spool_file preset.file)"
 check_absent "nothing was published" "$(spool_dir)/job.json"
-check "the user is told to run again" "The transform or model changed while the document was being read. Click Rewrite again." \
+check "the user is told to run again" "The transform or model changed while the document was being read. Click Go again." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 # Positive control: the same scan with no switch publishes.
