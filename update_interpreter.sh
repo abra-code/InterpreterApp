@@ -4,9 +4,10 @@
 # Trimmed from MLXChat's update script: Interpreter needs ONLY the mlx-agent binary and its
 # resource bundles (no replay, no MCP packages, no embedded Python).
 #
-# Steps: (1) build mlx-agent via xcodebuild (Metal shaders need the xcode build; there is no
-# longer a Package.swift to `swift build` at all, and the products land in the repo's
-# `build/` derived-data dir), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
+# Steps: (1) re-resolve mlx-agent's packages and archive it with xcodebuild, Release (Metal
+# shaders need the xcode build; there is no longer a Package.swift to `swift build` at all, and
+# the archive and its intermediates land in the repo's `build/` derived-data dir; --debug makes
+# a plain Debug build instead), (2) copy mlx-agent + mlx-swift_Cmlx.bundle (+ optional crypto/transformers
 # bundles) to Contents/Support/MLX/, build + embed pdfutil from its sibling repo, (3) download
 # the llama.cpp release into Contents/Support/Llama.cpp/ (--skip-llama leaves it untouched),
 # (4) deep-sign the whole bundle via codesign_applet.sh, (5) verify the deployed agent launches
@@ -227,7 +228,23 @@ if [ -z "$AGENT_REPO" ]; then
         && AGENT_REPO="$(cd "$SCRIPT_DIR/../mlx-agent" && pwd)"
 fi
 [ -n "$AGENT_REPO" ] && [ -d "$AGENT_REPO/mlx-agent.xcodeproj" ] || fail "mlx-agent repo not found (looked for mlx-agent.xcodeproj); clone github.com/abra-code/mlx-agent beside this repo or pass --agent-repo=PATH"
-AGENT_BUILD_DIR="$AGENT_REPO/build/Build/Products/$CONFIG"
+# Release ships as an ARCHIVE, the same as update-cadabra.sh: an archive is what Xcode makes for
+# distribution. A plain build, in any configuration, gets com.apple.security.get-task-allow (a
+# debugger may attach), which the notary service refuses, and keeps its debug symbols in the
+# program. The archive holds the program alone, stripped, with its symbols beside it in dSYMs.
+# The packages' resource bundles (the Metal library among them) are not installed into the
+# archive, since a command line tool has nowhere to hold them; the archive build leaves them in
+# its intermediate folder under -derivedDataPath. Any other configuration (--debug) is a plain
+# build, for iterating on the agent - never for shipping.
+if [ "$CONFIG" = "Release" ]; then
+    AGENT_ARCHIVE="$AGENT_REPO/build/mlx-agent.xcarchive"
+    AGENT_BUILD_DIR="$AGENT_ARCHIVE/Products/usr/local/bin"
+    AGENT_BUNDLES_DIR="$AGENT_REPO/build/Build/Intermediates.noindex/ArchiveIntermediates/mlx-agent/IntermediateBuildFilesPath/UninstalledProducts/macosx"
+else
+    AGENT_ARCHIVE=""
+    AGENT_BUILD_DIR="$AGENT_REPO/build/Build/Products/$CONFIG"
+    AGENT_BUNDLES_DIR="$AGENT_BUILD_DIR"
+fi
 
 echo
 echo "==== Updating $(basename "$APP_BUNDLE") ($CONFIG, $ARCH) ===="
@@ -275,14 +292,34 @@ if [ "$DO_BUILD" = "yes" ]; then
         [ -f "$_resolved" ] || fail "--skip-agent-package-update was given, but there is no $_resolved - the build would resolve from scratch and upgrade anyway. Restore it (git -C '$AGENT_REPO' checkout -- mlx-agent.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved) or drop the flag."
         echo "  --skip-agent-package-update: building against the committed Package.resolved"
     fi
-    echo "  Building mlx-agent $CONFIG (compiles Metal shaders)..."
-    ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -project mlx-agent.xcodeproj -scheme mlx-agent \
-        -destination "platform=macOS,arch=$ARCH" -derivedDataPath build \
-        -configuration "$CONFIG" -skipPackagePluginValidation -skipMacroValidation build ) \
-        2>&1 | /usr/bin/grep -iE "error:|BUILD (SUCCEEDED|FAILED)" | /usr/bin/tail -10
-    [ "${PIPESTATUS[0]}" = 0 ] || fail "xcodebuild failed."
+    if [ -n "$AGENT_ARCHIVE" ]; then
+        # The configuration is passed explicitly rather than left to the scheme's archive
+        # action, so a change in the scheme cannot change what ships. The old archive goes
+        # first: a build that fails must not leave the previous program where the deploy step
+        # below would take it for the new one.
+        /bin/rm -rf "$AGENT_ARCHIVE"
+        echo "  Archiving mlx-agent (xcodebuild archive, Release - compiles Metal shaders)..."
+        ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -project mlx-agent.xcodeproj -scheme mlx-agent \
+            -destination "platform=macOS,arch=$ARCH" -derivedDataPath build \
+            -configuration Release -skipPackagePluginValidation -skipMacroValidation \
+            -archivePath "$AGENT_ARCHIVE" archive ) \
+            2>&1 | /usr/bin/grep -iE "error:|ARCHIVE (SUCCEEDED|FAILED)" | /usr/bin/tail -10
+        _xcodebuild_status=${PIPESTATUS[0]}
+    else
+        echo "  Building mlx-agent $CONFIG (plain build, not for shipping - compiles Metal shaders)..."
+        ( cd "$AGENT_REPO" && /usr/bin/xcodebuild -project mlx-agent.xcodeproj -scheme mlx-agent \
+            -destination "platform=macOS,arch=$ARCH" -derivedDataPath build \
+            -configuration "$CONFIG" -skipPackagePluginValidation -skipMacroValidation build ) \
+            2>&1 | /usr/bin/grep -iE "error:|BUILD (SUCCEEDED|FAILED)" | /usr/bin/tail -10
+        _xcodebuild_status=${PIPESTATUS[0]}
+    fi
+    [ "$_xcodebuild_status" = 0 ] || fail "xcodebuild failed."
 fi
-[ -x "$AGENT_BUILD_DIR/mlx-agent" ] || fail "No built mlx-agent at $AGENT_BUILD_DIR (build first, or drop --skip-build)."
+if [ -n "$AGENT_ARCHIVE" ]; then
+    [ -x "$AGENT_BUILD_DIR/mlx-agent" ] || fail "No archived mlx-agent at $AGENT_BUILD_DIR (drop --skip-build - a Release deploy takes the product of xcodebuild archive, so a tree with only plain builds will not do)."
+else
+    [ -x "$AGENT_BUILD_DIR/mlx-agent" ] || fail "No built mlx-agent at $AGENT_BUILD_DIR (build first, or drop --skip-build)."
+fi
 echo "  ${GREEN}Build OK${RESET}"
 
 # ── 2. Deploy the binary + its resource bundles ───────────────────────────
@@ -290,11 +327,11 @@ echo "  ${GREEN}Build OK${RESET}"
 /bin/cp -f "$AGENT_BUILD_DIR/mlx-agent" "$MLX_DIR/mlx-agent" || fail "Could not deploy mlx-agent"
 /bin/chmod +x "$MLX_DIR/mlx-agent"
 required_bundle="mlx-swift_Cmlx.bundle"
-[ -d "$AGENT_BUILD_DIR/$required_bundle" ] || fail "Required metallib bundle missing: $required_bundle"
+[ -d "$AGENT_BUNDLES_DIR/$required_bundle" ] || fail "Required metallib bundle missing: $AGENT_BUNDLES_DIR/$required_bundle$([ -n "$AGENT_ARCHIVE" ] && echo " (the archive build's intermediate folder; if Xcode moved it, AGENT_BUNDLES_DIR needs the new place)")"
 for b in "$required_bundle" swift-crypto_Crypto.bundle swift-transformers_Hub.bundle; do
-    if [ -d "$AGENT_BUILD_DIR/$b" ]; then
+    if [ -d "$AGENT_BUNDLES_DIR/$b" ]; then
         /bin/rm -rf "$MLX_DIR/$b"
-        /bin/cp -Rf "$AGENT_BUILD_DIR/$b" "$MLX_DIR/$b"
+        /bin/cp -Rf "$AGENT_BUNDLES_DIR/$b" "$MLX_DIR/$b"
     fi
 done
 [ -f "$MLX_DIR/$required_bundle/Contents/Resources/default.metallib" ] || fail "default.metallib not found after copy."
