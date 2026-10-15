@@ -1,10 +1,11 @@
 #!/usr/bin/perl
 # transform_check.pl - post-run check of a text transformer's output against its source.
-#   usage: perl transform_check.pl [--checks "numbers script length"] <source file> <result file>
+#   usage: perl transform_check.pl [--checks "numbers script length language"]
+#          [--language-change <source language> <result language>] <source file> <result file>
 # Prints one human-readable line describing what looks wrong, or nothing when the check passes.
 # Exit status is always 0 for a completed check; a non-zero exit means the files could not be read.
 #
-# Three checks, all deliberately crude and cheap:
+# Four checks, all deliberately crude and cheap:
 #   - missing numbers: every number in the source (digits with optional , or . groups) must appear
 #     in the result as a whole number - "14" inside "140" does not count. Thousands separators are
 #     ignored on both sides, so "18,600" matches "18600". A rewrite that spells a number out ("one
@@ -24,10 +25,16 @@
 #   - much shorter: a result with under 60% of the source's letters has probably dropped content
 #     (the spike saw a whole paragraph vanish, with no number in it for the checks above to miss).
 #     Measured on the spike's 43 Humanizer rewrites: they ran from 70% to 111% of the source.
-# --checks names the checks to run: "numbers" (both number checks), "script" and "length"; without
-# it all of them run. A preset whose job is to change the length ("Make concise") turns off "length".
+#   - language switch: the result is in another language than the source (Polish in, English out),
+#     which the script check cannot see within one alphabet. Identifying a language is langid's job,
+#     so the shell (transform_check in lib.interp.transform.sh) names both and passes them with
+#     --language-change only when they differ; this reports it unless the script check already did.
+# --checks names the checks to run: "numbers" (both number checks), "script", "length" and
+# "language"; without it all of them run. A preset whose job is to change the length
+# ("Make concise") turns off "length".
 use strict;
 use warnings;
+use Encode qw(decode);
 
 binmode STDOUT, ':encoding(UTF-8)';
 
@@ -69,14 +76,21 @@ sub han_share {
     return $han / $letters;
 }
 
-my %enabled = (numbers => 1, script => 1, length => 1);
-if (@ARGV && $ARGV[0] eq '--checks') {
-    shift @ARGV;
-    my $list = shift @ARGV;
-    my %asked = map { $_ => 1 } grep { /^(?:numbers|script|length)$/ } split ' ', (defined $list ? $list : '');
-    # A list naming no known check (a typo such as "lenght") runs every check rather than none:
-    # silently switching the check off is the worse failure.
-    %enabled = %asked if %asked;
+my %enabled = (numbers => 1, script => 1, length => 1, language => 1);
+my @language_change;
+while (@ARGV && $ARGV[0] =~ /^--/) {
+    my $option = shift @ARGV;
+    if ($option eq '--checks') {
+        my $list = shift @ARGV;
+        my %asked = map { $_ => 1 } grep { /^(?:numbers|script|length|language)$/ } split ' ', (defined $list ? $list : '');
+        # A list naming no known check (a typo such as "lenght") runs every check rather than none:
+        # silently switching the check off is the worse failure.
+        %enabled = %asked if %asked;
+    } elsif ($option eq '--language-change') {
+        @language_change = splice(@ARGV, 0, 2);
+    } else {
+        exit 2;
+    }
 }
 my ($source_path, $result_path) = @ARGV;
 exit 2 unless defined $source_path && defined $result_path;
@@ -94,6 +108,14 @@ if (!$enabled{script}) {
     push @problems, 'the result switched to Chinese';
 } elsif ($src_han >= 0.3 && $res_han < 0.3) {
     push @problems, 'the result switched away from Chinese';
+}
+
+# A language switch the script check cannot see (Polish in, English out). The shell names both
+# languages with langid and passes them only when it was confident about both and they differ; a
+# switch the script check already reported is not reported twice.
+if ($enabled{language} && @language_change == 2 && !grep { /^the result switched/ } @problems) {
+    my ($from, $to) = map { decode('UTF-8', $_) } @language_change;
+    push @problems, "the result is in $to, but the original is in $from";
 }
 
 # Numbers present in the result, normalized (thousands commas removed).

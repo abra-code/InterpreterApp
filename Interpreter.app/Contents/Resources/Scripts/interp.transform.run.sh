@@ -30,6 +30,18 @@ if [ -z "$preset" ] || [ ! -f "$preset" ]; then
     exit 0
 fi
 
+# A preset made for certain languages (Humanize: English and Chinese) refuses a text that is
+# clearly in another one, rather than spending a minute on a rewrite the model was not made for.
+/usr/bin/printf '%s' "$src" > "$spool/detect.txt"
+refusal=$(transform_language_refusal "$preset" "$spool/detect.txt")
+refusal_rc=$?
+/bin/rm -f "$spool/detect.txt"
+if [ "$refusal_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "$refusal"
+    exit 0
+fi
+
 /usr/bin/printf '%s' "$src" | publish_transform_job "$spool" "$preset"
 rc=$?
 if [ "$rc" -ne 0 ]; then

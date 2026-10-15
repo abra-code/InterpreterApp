@@ -84,6 +84,15 @@ if [ "$current_preset" != "$preset" ]; then
     exit 0
 fi
 
+# A preset made for certain languages refuses a document clearly in another (see interp.transform.run).
+refusal=$(transform_language_refusal "$preset" "$conv")
+refusal_rc=$?
+if [ "$refusal_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "$refusal"
+    exit 0
+fi
+
 /bin/cat "$conv" | publish_transform_job "$spool" "$preset"
 publish_rc=$?
 if [ "$publish_rc" -ne 0 ]; then

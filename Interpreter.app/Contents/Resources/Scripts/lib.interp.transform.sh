@@ -128,6 +128,62 @@ publish_transform_job() {   # $1 = spool, $2 = preset file ; source text on STDI
     /bin/mv "$_tmp" "$_spool/job.json"
 }
 
+# --- the language of a text, for transforms -----------------------------------------------------
+#
+# A transform keeps the language of its input, so only the LANGUAGE matters here, not the variant
+# the translator distinguishes: langid without --keep-script ("zh", "pt"). The floor is higher than
+# Detect language's 0.5, because here an answer is used to refuse a run or to flag a finished one,
+# and a false alarm on a sound result is worse than a missed one. Ordinary sentences score
+# 0.8-1.0; a lone word or a block of code usually does not, and is then simply not judged.
+TRANSFORM_LANG_MIN_CONFIDENCE="0.8"
+
+# The language of a text file as a bare language code ("pl"), or nothing when langid will not say.
+transform_text_language() {   # $1 = text file
+    [ -x "$LANGID_BIN" ] || return 0
+    local _raw
+    _raw=$("$LANGID_BIN" --min-confidence "$TRANSFORM_LANG_MIN_CONFIDENCE" --file "$1" 2>/dev/null)
+    /usr/bin/printf '%s' "$_raw" | /usr/bin/head -1 | /usr/bin/tr -cd 'a-z'
+}
+
+# English name of a bare language code, without the variant: "zh" -> "Chinese", "pt" ->
+# "Portuguese". From languages.tsv (the first row for the language, its parenthesis dropped), so a
+# language the app does not list falls back to its code.
+transform_language_name() {   # $1 = bare code
+    local _name=$(/usr/bin/awk -F'\t' -v c="$1" '$2 == c || index($2, c "-") == 1 { print $1; exit }' \
+        "$RESOURCES_DIR/languages.tsv" 2>/dev/null)
+    _name="${_name%% (*}"
+    /usr/bin/printf '%s' "${_name:-$1}"
+}
+
+# Refuse a text that is clearly in a language the preset's model was not made for. A preset may
+# list its languages ("languages": ["en", "zh"] - the Humanizer was trained on English and Chinese
+# only); one without the field takes any language. A text langid cannot place is let through: the
+# refusal is for a confident mismatch, never for doubt.
+# Prints the reason and returns 1 when refused; prints nothing and returns 0 otherwise.
+transform_language_refusal() {   # $1 = preset file, $2 = text file
+    # Bare language codes: a listed "zh-Hant" counts as "zh", the level langid answers at here.
+    local _langs=$("$plutil" -extract languages json -o - "$1" 2>/dev/null | /usr/bin/tr -cd 'A-Za-z,-' \
+        | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/sed -e 's/-[a-z]*//g')
+    [ -n "$_langs" ] || return 0
+    local _lang=$(transform_text_language "$2")
+    [ -n "$_lang" ] || return 0
+    case ",$_langs," in *",$_lang,"*) return 0 ;; esac
+
+    # "English", "English and Chinese", "English, Chinese and Japanese".
+    local _list="" _code _n=0
+    local _count=$(/usr/bin/printf '%s' "$_langs" | /usr/bin/tr ',' '\n' | /usr/bin/grep -c .)
+    case "$_count" in ''|*[!0-9]*) _count=0 ;; esac
+    for _code in $(/usr/bin/printf '%s' "$_langs" | /usr/bin/tr ',' ' '); do
+        _n=$((_n + 1))
+        if [ "$_n" -eq 1 ]; then _list="$(transform_language_name "$_code")"
+        elif [ "$_n" -eq "$_count" ]; then _list="$_list and $(transform_language_name "$_code")"
+        else _list="$_list, $(transform_language_name "$_code")"
+        fi
+    done
+    /usr/bin/printf '%s' "$(preset_get "$1" name) works on $_list text, and this looks like $(transform_language_name "$_lang")."
+    return 1
+}
+
 # The suffix a preset's document output is named with ("report.pdf" -> "report-humanized.txt").
 # It takes the place the target language code has in the translator's names, so the same output
 # helpers (unique_output_path, doc_output_path_for, set_doc_output) name, memoize and uniquify it.
@@ -191,16 +247,26 @@ spawn_transform_broker() {   # $1 = spool, $2 = model dir, $3 = preset file
 # Fact check of a finished rewrite: numbers missing from or added to the result, a script switch
 # (Latin in, Chinese out or the reverse), and a result far shorter than its source. Writes a
 # one-line human summary to $3 (empty file when nothing was found). The analysis lives in
-# transform_check.pl. A preset's optional "checks" string ("numbers script length") picks which of
-# the three apply - "Make concise" is supposed to shorten - and without one all three run.
+# transform_check.pl. A preset's optional "checks" string ("numbers script length language")
+# picks which of them apply - "Make concise" is supposed to shorten - and without one all of them
+# run.
+#
+# The language check is the shell's part: langid names the language of both texts, and when both
+# are confident and differ (Polish in, English out - the script check cannot see a switch within
+# the Latin alphabet), their names go to the Perl helper, which reports it if "language" is on.
 transform_check() {   # $1 = source file, $2 = result file, $3 = output file, [$4 = preset file]
     local _checks=""
     [ -n "${4:-}" ] && _checks="$(preset_get "$4" checks | /usr/bin/tr -cd 'a-z ')"
-    if [ -n "$_checks" ]; then
-        /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" --checks "$_checks" "$1" "$2" > "$3" 2>/dev/null || : > "$3"
-    else
-        /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" "$1" "$2" > "$3" 2>/dev/null || : > "$3"
+    local _src_lang=$(transform_text_language "$1")
+    local _res_lang=$(transform_text_language "$2")
+    local _src_name="" _res_name=""
+    if [ -n "$_src_lang" ] && [ -n "$_res_lang" ] && [ "$_src_lang" != "$_res_lang" ]; then
+        _src_name="$(transform_language_name "$_src_lang")"
+        _res_name="$(transform_language_name "$_res_lang")"
     fi
+    /usr/bin/perl "$SCRIPTS_DIR/transform_check.pl" ${_checks:+--checks "$_checks"} \
+        ${_src_name:+--language-change "$_src_name" "$_res_name"} \
+        "$1" "$2" > "$3" 2>/dev/null || : > "$3"
 }
 
 # Fill the Transform picker from the bundled presets and select the saved one (defaults key

@@ -48,9 +48,9 @@ check "no two presets share an id" "" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract id raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
 check "no two presets share a name" "" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract name raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
-check "every checks word is numbers, script or length" "" \
+check "every checks word is numbers, script, length or language" "" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract checks raw -o - "$f" 2>/dev/null; echo; done \
-        | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -x -e '' -e numbers -e script -e length)"
+        | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -x -e '' -e numbers -e script -e length -e language)"
 
 section "a preset can turn the length check off, and only that"
 long="$(make_text_file p.long "$(/usr/bin/awk 'BEGIN { for (i = 0; i < 30; i++) printf "Every paragraph here says something about 42 things. " }')")"
