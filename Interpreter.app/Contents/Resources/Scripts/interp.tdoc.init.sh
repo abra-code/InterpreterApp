@@ -33,7 +33,7 @@ populate_preset_picker "$spool"
     < /dev/null > "$spool/poll.log" 2>&1 &
 
 preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
-installed="$(list_transform_dirs "$(preset_get "$preset" family)")"
+installed="$(list_preset_model_dirs "$preset")"
 if [ -z "$installed" ]; then
     "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.tmodels"
 fi

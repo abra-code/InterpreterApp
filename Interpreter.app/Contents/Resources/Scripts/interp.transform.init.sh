@@ -1,8 +1,8 @@
 # interp.transform.init - fired when a Text Transform window loads. Fills the Transform (preset)
 # picker, takes over selected text from the "Rewrite with Interpreter" service, and spawns the UI
 # poller in transform mode. As in the translator, the poller owns the broker: it lists the
-# installed models of the preset's family, spawns llama-server + map with the preset's settings,
-# and reflects status and results.
+# installed models of the transform's families, spawns llama-server + map with the preset's
+# settings, and reflects status and results.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
@@ -29,7 +29,7 @@ fi
 
 # Nothing installed for the selected preset yet: open the transform model chooser over the window.
 preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
-installed="$(list_transform_dirs "$(preset_get "$preset" family)")"
+installed="$(list_preset_model_dirs "$preset")"
 if [ -z "$installed" ]; then
     "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.tmodels"
 fi

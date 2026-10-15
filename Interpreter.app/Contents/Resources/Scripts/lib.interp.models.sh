@@ -51,7 +51,7 @@ family_blurb() {   # $1 = family
         hymt)           echo "Tencent's translator: the top pick for Chinese and Japanese; for European languages prefer the other families." ;;
         humanizer)      echo "Rewrites English or Chinese AI-sounding drafts to read as written by a person, keeping the facts." ;;
         gohumanize)     echo "A small, fast English-only rewriter for AI-sounding drafts; leaves more text unchanged." ;;
-        gemma4it)       echo "Google's general model: runs the editing transforms - grammar, tone, length and plain language - in many languages." ;;
+        gemma4it)       echo "Google's general model: fixes grammar, changes tone or length, simplifies, and humanizes AI-sounding text, in many languages." ;;
         *)              echo "" ;;
     esac
 }

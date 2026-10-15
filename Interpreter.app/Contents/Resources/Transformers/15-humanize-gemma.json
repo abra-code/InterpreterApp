@@ -1,0 +1,32 @@
+{
+  "id": "humanize",
+  "name": "Humanize",
+  "family": "gemma4it",
+  "button": "Rewrite",
+  "notice": "Gemma 4 rewrites AI-sounding text so it reads as written by a person, in many languages. It keeps the facts more reliably than the Humanizer, but was not trained to pass AI detectors. Each run gives a different version.",
+  "output_suffix": "humanized",
+  "server": {
+    "chat_template_kwargs": "{\"enable_thinking\":false}",
+    "ctx_size": 8192,
+    "top_k": 64
+  },
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.8,
+    "top_p": 0.95
+  },
+  "job": {
+    "budget_tokens": 600,
+    "messages": [
+      {
+        "content": "Rewrite the text the user sends so it reads like a person wrote it, not a language model. Reword it freely and reorder sentences where that reads better. Vary sentence length on purpose. Cut hedging, throat-clearing, stock phrases, and any sentence that only announces what comes next. Prefer the concrete word over the abstract one. It is fine to sound uneven. Do not summarize: keep every point the text makes, so the result is about as long as the text. Return only the rewritten text: no preamble, no explanation, no quotation marks around it, no notes about what you changed. Write in the same language as the text. Keep the paragraph breaks, and keep lists as lists, with their numbers. Keep every fact, number, unit, date, name and quotation unchanged.",
+        "role": "system"
+      },
+      {
+        "content": "{{chunk}}",
+        "role": "user"
+      }
+    ],
+    "output": "stitch"
+  }
+}

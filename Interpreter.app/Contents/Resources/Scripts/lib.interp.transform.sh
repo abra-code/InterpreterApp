@@ -14,6 +14,13 @@
 # Jobs are built by copying `job` out with plutil and setting epoch/text_file with plutil, so preset
 # text (newlines, quotes, non-ASCII) is never spliced into JSON by hand.
 #
+# One transform can run on more than one model family: each family gets its own file (its prompt
+# and sampling are tuned to that model), and the files share the transform's id and name. These
+# are the transform's VARIANTS. The Transform picker shows a transform once, at its first file's
+# place; the Model picker lists the installed models of every variant's family; and the window's
+# preset (spool/preset.file) is always the variant made for the selected model's family, so the
+# job, the server flags, the notice and the checks all follow the Model picker.
+#
 # Installed transformer models live in Transformers/ under app support, apart from the translation
 # Models/, so neither picker can offer the other kind. A model dir's family is looked up by its
 # directory name in models.transform.catalog.tsv (column 3 is the install name); a dir the catalog
@@ -54,6 +61,60 @@ preset_file_for_id() {   # $1 = id
         [ "$(preset_get "$_f" id)" = "$1" ] && { /usr/bin/printf '%s' "$_f"; return 0; }
     done
     return 1
+}
+
+# Every variant of the preset's transform (the preset files with its id), in picker order, one path
+# per line. A preset without an id, or whose id no file in the presets folder has, is its own only
+# variant.
+preset_variants() {   # $1 = preset file
+    local _id="$(preset_get "$1" id)"
+    local _f _found=""
+    if [ -n "$_id" ]; then
+        for _f in "$PRESETS_DIR"/*.json; do
+            [ -f "$_f" ] || continue
+            [ "$(preset_get "$_f" id)" = "$_id" ] || continue
+            /usr/bin/printf '%s\n' "$_f"
+            _found=1
+        done
+    fi
+    [ -n "$_found" ] || /usr/bin/printf '%s\n' "$1"
+}
+
+# The model families a transform runs on, one per line, in variant order, each once.
+preset_families() {   # $1 = preset file
+    local _v
+    preset_variants "$1" | while IFS= read -r _v; do
+        preset_get "$_v" family
+        echo
+    done | /usr/bin/awk 'NF && !seen[$0]++'
+}
+
+# The variant of the preset's transform made for a model family, or nothing.
+preset_variant_for_family() {   # $1 = preset file, $2 = family
+    [ -n "$2" ] || return 0
+    local _v
+    preset_variants "$1" | while IFS= read -r _v; do
+        if [ "$(preset_get "$_v" family)" = "$2" ]; then
+            /usr/bin/printf '%s' "$_v"
+            break
+        fi
+    done
+}
+
+# Installed models a transform can run on: those of every variant's family, variant by variant.
+list_preset_model_dirs() {   # $1 = preset file
+    local _fam
+    for _fam in $(preset_families "$1"); do
+        list_transform_dirs "$_fam"
+    done
+}
+
+# The defaults key that remembers the model last picked for a transform, so a transform with two
+# families goes back to the one its user chose ("TransformModelName.humanize"). Empty for a preset
+# without a usable id.
+transform_model_pref_key() {   # $1 = preset file
+    local _id="$(preset_get "$1" id | /usr/bin/tr -cd 'A-Za-z0-9_-')"
+    [ -n "$_id" ] && /usr/bin/printf 'TransformModelName.%s' "$_id"
 }
 
 # Family of an installed transformer dir: the catalog row whose install name (column 3) equals the
@@ -160,10 +221,11 @@ transform_language_name() {   # $1 = bare code
 # only); one without the field takes any language. A text langid cannot place is let through: the
 # refusal is for a confident mismatch, never for doubt.
 # Prints the reason and returns 1 when refused; prints nothing and returns 0 otherwise.
+#
+# When another variant of the transform takes the language (Humanize also runs on Gemma 4), the
+# reason names the models instead of the transform and says which one to choose.
 transform_language_refusal() {   # $1 = preset file, $2 = text file
-    # Bare language codes: a listed "zh-Hant" counts as "zh", the level langid answers at here.
-    local _langs=$("$plutil" -extract languages json -o - "$1" 2>/dev/null | /usr/bin/tr -cd 'A-Za-z,-' \
-        | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/sed -e 's/-[a-z]*//g')
+    local _langs=$(preset_bare_languages "$1")
     [ -n "$_langs" ] || return 0
     local _lang=$(transform_text_language "$2")
     [ -n "$_lang" ] || return 0
@@ -180,8 +242,33 @@ transform_language_refusal() {   # $1 = preset file, $2 = text file
         else _list="$_list, $(transform_language_name "$_code")"
         fi
     done
-    /usr/bin/printf '%s' "$(preset_get "$1" name) works on $_list text, and this looks like $(transform_language_name "$_lang")."
+
+    local _alt=$(preset_family_for_language "$1" "$_lang")
+    if [ -n "$_alt" ]; then
+        /usr/bin/printf '%s' "$(transform_family_display_name "$(preset_get "$1" family)") works on $_list text, and this looks like $(transform_language_name "$_lang"). Choose a $(transform_family_display_name "$_alt") model under Model to rewrite it."
+    else
+        /usr/bin/printf '%s' "$(preset_get "$1" name) works on $_list text, and this looks like $(transform_language_name "$_lang")."
+    fi
     return 1
+}
+
+# The family of another variant of the preset's transform that takes a language, or nothing.
+preset_family_for_language() {   # $1 = preset file, $2 = bare language code
+    local _v _vl
+    preset_variants "$1" | while IFS= read -r _v; do
+        [ "$_v" = "$1" ] && continue
+        _vl=$(preset_bare_languages "$_v")
+        case ",$_vl," in
+            ,,|*",$2,"*) preset_get "$_v" family; break ;;
+        esac
+    done
+}
+
+# The languages a preset lists, as bare codes ("en,zh"): a listed "zh-Hant" counts as "zh", the
+# level langid answers at here. Empty for a preset that takes any language.
+preset_bare_languages() {   # $1 = preset file
+    "$plutil" -extract languages json -o - "$1" 2>/dev/null | /usr/bin/tr -cd 'A-Za-z,-' \
+        | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/sed -e 's/-[a-z]*//g'
 }
 
 # The suffix a preset's document output is named with ("report.pdf" -> "report-humanized.txt").
@@ -270,18 +357,24 @@ transform_check() {   # $1 = source file, $2 = result file, $3 = output file, [$
 }
 
 # Fill the Transform picker from the bundled presets and select the saved one (defaults key
-# TransformPreset, by preset id), falling back to the first. A parallel `presetfiles` index in the
-# spool maps the picker's 1-based index back to a file. Applies the selected preset (see
-# apply_preset). The programmatic sets run inside a quiet window that
-# interp.transform.preset.changed honors, the same guard the model picker uses.
+# TransformPreset, by preset id), falling back to the first. A transform with several variants is
+# listed once, by its first file. A parallel `presetfiles` index in the spool maps the picker's
+# 1-based index back to that file. Selects the transform (see select_transform). The programmatic
+# sets run inside a quiet window that interp.transform.preset.changed honors, the same guard the
+# model picker uses.
 populate_preset_picker() {   # $1 = spool
-    local _spool="$1" _f _name
-    local _opts="[" _first=1
+    local _spool="$1" _f _name _id
+    local _opts="[" _first=1 _seen=","
     : > "$_spool/presetfiles.tmp"
     for _f in "$PRESETS_DIR"/*.json; do
         [ -f "$_f" ] || continue
         _name="$(preset_get "$_f" name | /usr/bin/tr -d '"\\')"
         [ -n "$_name" ] || continue
+        _id="$(preset_get "$_f" id)"
+        if [ -n "$_id" ]; then
+            case "$_seen" in *",$_id,"*) continue ;; esac
+            _seen="$_seen$_id,"
+        fi
         if [ "$_first" = 1 ]; then _first=0; else _opts="$_opts,"; fi
         _opts="$_opts\"$_name\""
         /usr/bin/printf '%s\n' "$_f" >> "$_spool/presetfiles.tmp"
@@ -299,7 +392,47 @@ populate_preset_picker() {   # $1 = spool
     /usr/bin/printf '%s' "$(( $(/bin/date +%s) + 2 ))" > "$_spool/preset_quiet"
     "$dialog" "$window_uuid" "$PRESET_PICKER" omc_set_property "options" "$_opts"
     "$dialog" "$window_uuid" "$PRESET_PICKER" "$_idx"
-    [ -n "$_sel" ] && apply_preset "$_spool" "$_sel"
+    [ -n "$_sel" ] && select_transform "$_spool" "$_sel"
+}
+
+# Make a transform the window's current one, on the model last picked for it when that model is
+# installed (else the current model when the transform runs on it; else the poller picks, as for a
+# new window), and on the variant made for that model's family.
+select_transform() {   # $1 = spool, $2 = preset file (any variant of the transform)
+    local _spool="$1"
+    local _dirs="$(list_preset_model_dirs "$2")"
+    local _cur="$(/bin/cat "$_spool/model.dir" 2>/dev/null)"
+    local _key="$(transform_model_pref_key "$2")"
+    local _saved=""
+    [ -n "$_key" ] && _saved="$("$defaults_tool" read "$BUNDLE_ID" "$_key" 2>/dev/null)"
+    local _want=""
+    [ -n "$_saved" ] && _want="$(/usr/bin/printf '%s\n' "$_dirs" | /usr/bin/awk -F/ -v n="$_saved" '$NF==n { print; exit }')"
+    if [ -z "$_want" ] && [ -n "$_cur" ]; then
+        _want="$(/usr/bin/printf '%s\n' "$_dirs" | /usr/bin/grep -Fx -- "$_cur" | /usr/bin/head -1)"
+    fi
+
+    local _var=""
+    [ -n "$_want" ] && _var="$(preset_variant_for_family "$2" "$(transform_family_of "$_want")")"
+    [ -n "$_var" ] || _var="$(preset_variants "$2" | /usr/bin/head -1)"
+    apply_preset "$_spool" "${_var:-$2}"
+    if [ -n "$_want" ] && [ "$_want" != "$_cur" ]; then
+        /usr/bin/printf '%s' "$_want" > "$_spool/model.dir.tmp" && /bin/mv "$_spool/model.dir.tmp" "$_spool/model.dir"
+    fi
+}
+
+# Keep the window's preset on the variant made for the selected model's family: after the user
+# picks a model of another family, or the poller picks one for a new window or after a download.
+# Does nothing when the preset already fits, or the transform has no variant for that family.
+sync_preset_variant() {   # $1 = spool
+    local _model="$(/bin/cat "$1/model.dir" 2>/dev/null)"
+    local _preset="$(/bin/cat "$1/preset.file" 2>/dev/null)"
+    [ -n "$_model" ] && [ -f "$_preset" ] || return 0
+    local _fam="$(transform_family_of "$_model")"
+    [ -n "$_fam" ] || return 0
+    [ "$(preset_get "$_preset" family)" = "$_fam" ] && return 0
+    local _var="$(preset_variant_for_family "$_preset" "$_fam")"
+    [ -n "$_var" ] || return 0
+    apply_preset "$1" "$_var"
 }
 
 # Make a preset the window's current one: record it for the poller (which rebuilds the model list

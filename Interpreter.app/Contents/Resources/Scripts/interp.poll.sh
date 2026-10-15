@@ -15,11 +15,12 @@
 # switch handler managing broker processes. The two windows share this one poller; only the swap
 # button (text-only) and the result delivery differ by mode.
 #
-# transform mode (the Text Transform window): the model list is the installed transformers of the
-# selected preset's family (spool/preset.file, written by interp.transform.init and
-# interp.transform.preset.changed), the broker is keyed on model AND preset (sampling is per
-# broker process), there are no language pickers, and a finished run gets a fact check
-# (transform_check) shown under the result.
+# transform mode (the Text Transform window): the model list is the installed transformers of
+# every family the selected transform runs on (spool/preset.file, written by
+# interp.transform.init and interp.transform.preset.changed), the preset follows the selected
+# model to the transform's variant for its family, the broker is keyed on model AND preset
+# (sampling is per broker process), there are no language pickers, and a finished run gets a fact
+# check (transform_check) shown under the result.
 #
 # transform-doc mode (the Text Transform document window) is transform mode with document mode's
 # delivery: the finished result is written to the output file instead of the right-hand editor.
@@ -48,15 +49,28 @@ else
 fi
 LAST_CHECK_EPOCH=""       # transform mode: epoch whose finished result was already checked
 
+# Transform mode: the model families the window's transform runs on (every variant's), space
+# separated. Listing them reads every preset file, so it is redone only when the preset changes.
+GROUP_PRESET="__unset__"
+GROUP_FAMS=""
+sync_group() {
+    [ "$IS_TRANSFORM" = 1 ] || return 0
+    local _preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
+    [ "$_preset" = "$GROUP_PRESET" ] && return 0
+    GROUP_PRESET="$_preset"
+    GROUP_FAMS="$(preset_families "$_preset" | /usr/bin/tr '\n' ' ')"
+}
+
 # The installed models this window can pick from, one resolved path per line, and their labels.
-# The transform list carries the preset's family on its first line, so a preset switch to a
-# different family changes the signature sync_models compares and rebuilds the picker.
+# The transform list carries the transform's families on its first line, so a preset switch to
+# other families changes the signature sync_models compares and rebuilds the picker.
 window_model_list() {
     if [ "$IS_TRANSFORM" = 1 ]; then
-        local _preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
-        local _fam="$(preset_get "$_preset" family)"
-        /usr/bin/printf '#%s\n' "$_fam"
-        list_transform_dirs "$_fam"
+        local _fam
+        /usr/bin/printf '#%s\n' "$GROUP_FAMS"
+        for _fam in $GROUP_FAMS; do
+            list_transform_dirs "$_fam"
+        done
     else
         list_model_dirs
     fi
@@ -84,11 +98,24 @@ LAST_MODELS="__unset__"   # signature of the installed-model set (rebuild the pi
                           # chooser's Done-without-download path must still build the picker.
 LAST_UI_SIG=""            # coarse UI signature (state + progress + label) to avoid redundant writes
 LAST_RESULT_SIG=""        # mtime+size of result.txt
+LAST_SHOWN_SEL=""         # model dir the Model picker was last set to show
 
 # --- keep the Model picker in sync with what is installed -------------------
 sync_models() {
     local _list="$(window_model_list)"
-    [ "$_list" = "$LAST_MODELS" ] && return 0
+    if [ "$_list" = "$LAST_MODELS" ]; then
+        # Transform mode: a transform switch can move the model without changing the list (two
+        # transforms on one family, each back on the model last picked for it, see
+        # select_transform), so a moved selection is shown here too.
+        local _cur="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
+        if [ "$IS_TRANSFORM" = 1 ] && [ -n "$_cur" ] && [ "$_cur" != "$LAST_SHOWN_SEL" ]; then
+            local _ri="$(/usr/bin/grep -Fxn "$_cur" "$spool/modelpaths" 2>/dev/null | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
+            case "$_ri" in ''|*[!0-9]*) return 0 ;; esac
+            LAST_SHOWN_SEL="$_cur"
+            "$dialog" "$window_uuid" "$MODEL_PICKER" "$_ri"
+        fi
+        return 0
+    fi
     LAST_MODELS="$_list"
 
     local _opts="[" _first=1 _oldifs="$IFS" _m _lbl
@@ -137,11 +164,24 @@ sync_models() {
     fi
 
     # Reflect the selected model as the picker's 1-based selection (idempotent for the handler).
+    LAST_SHOWN_SEL="$_sel"
     if [ -n "$_sel" ]; then
         local _ci="$(/usr/bin/grep -Fxn "$_sel" "$spool/modelpaths" 2>/dev/null | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
         case "$_ci" in ''|*[!0-9]*) _ci=1 ;; esac
         "$dialog" "$window_uuid" "$MODEL_PICKER" "$_ci"
     fi
+}
+
+# Transform mode: when the selected model is of another family than the window's preset (the
+# window opened, or a download landed, on a model of the transform's other family), switch to the
+# variant made for it. Looked at only when the model or the preset changed since the last tick.
+LAST_VARIANT_KEY=""
+sync_variant() {
+    [ "$IS_TRANSFORM" = 1 ] || return 0
+    local _key="$(/bin/cat "$spool/model.dir" 2>/dev/null)|$(/bin/cat "$spool/preset.file" 2>/dev/null)"
+    [ "$_key" = "$LAST_VARIANT_KEY" ] && return 0
+    LAST_VARIANT_KEY="$_key"
+    sync_preset_variant "$spool"
 }
 
 # --- keep the language pickers matched to the selected model's family --------
@@ -400,7 +440,9 @@ check_result() {
 }
 
 while [ -d "$spool" ]; do
+    sync_group
     sync_models
+    sync_variant
     sync_languages
     ensure_broker
     reflect_ui

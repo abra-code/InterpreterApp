@@ -4,6 +4,7 @@
 # key (TransformModelName) so it never disturbs the translator's saved model.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
+source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
 
 idx="$OMC_ACTIONUI_VIEW_25_VALUE"
 case "$idx" in ''|*[!0-9]*) exit 0 ;; esac
@@ -40,7 +41,13 @@ cur=$(/bin/cat "$spool/model.dir" 2>/dev/null)
 # Rewrite goes off until the poller has respawned the broker on the new model (see apply_preset).
 disable_ctrl "$TRANSLATE_BTN"
 /usr/bin/printf '%s' "$sel" > "$spool/model.dir.tmp" && /bin/mv "$spool/model.dir.tmp" "$spool/model.dir"
+# A model of another family runs the transform's variant made for it (Humanize on the Humanizer
+# or on Gemma 4), which also brings that variant's notice.
+sync_preset_variant "$spool"
 : > "$spool/ui.stale"      # after the switch is recorded: the poller re-renders the button
 "$defaults_tool" write "$BUNDLE_ID" TransformModelName "$(/usr/bin/basename "$sel")"
+# And for this transform, so switching to another transform and back returns to this model.
+pref_key="$(transform_model_pref_key "$(/bin/cat "$spool/preset.file" 2>/dev/null)")"
+[ -n "$pref_key" ] && "$defaults_tool" write "$BUNDLE_ID" "$pref_key" "$(/usr/bin/basename "$sel")"
 
 exit 0

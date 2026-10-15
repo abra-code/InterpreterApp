@@ -4,7 +4,7 @@
   "family": "humanizer",
   "button": "Rewrite",
   "languages": ["en", "zh"],
-  "notice": "Rewrites English or Chinese text so it reads as written by a person. Each run gives a different version. It can change numbers, dates and names, so proofread the result.",
+  "notice": "The Humanizer rewrites English or Chinese text so it reads as written by a person. Each run gives a different version. It can change numbers, dates and names, so proofread the result. For other languages, choose Gemma 4 under Model.",
   "output_suffix": "humanized",
   "server": { "ctx_size": 8192, "top_k": 0, "min_p": 0 },
   "sampling": { "temperature": 1.0, "top_p": 0.95, "max_new_tokens": 2048 },

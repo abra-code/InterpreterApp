@@ -43,11 +43,30 @@ for f in "$PRESETS"/*.json; do
 done
 check "there are Gemma 4 presets at all" "yes" "$([ "$n" -ge 1 ] && echo yes || echo no)"
 
-section "preset ids and names are unique, and checks name only known checks"
-check "no two presets share an id" "" \
-    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract id raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
-check "no two presets share a name" "" \
-    "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract name raw -o - "$f"; done | /usr/bin/sort | /usr/bin/uniq -d)"
+section "Humanize also runs on Gemma 4, for text in any language"
+hg="$PRESETS/15-humanize-gemma.json"
+check "it is Humanize, not a transform of its own" "humanize Humanize" \
+    "$(/usr/bin/plutil -extract id raw -o - "$hg") $(/usr/bin/plutil -extract name raw -o - "$hg")"
+check "it is a Gemma 4 preset" "gemma4it" "$(/usr/bin/plutil -extract family raw -o - "$hg")"
+check "it sits right after Humanize in the picker" "10-humanize.json 15-humanize-gemma.json" \
+    "$(for f in "$PRESETS"/*.json; do /usr/bin/basename "$f"; done | /usr/bin/sed -n '1,2p' | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ $//')"
+# The spike's two failures with the plain Humanize prompt on Gemma 4: emails cut to half their
+# length, and a numbered list turned into prose that lost its numbers.
+check "it is told not to summarize" "yes" \
+    "$(contains "$(/usr/bin/plutil -extract job.messages.0.content raw -o - "$hg")" 'Do not summarize')"
+check "and to keep a list's numbers" "yes" \
+    "$(contains "$(/usr/bin/plutil -extract job.messages.0.content raw -o - "$hg")" 'keep lists as lists, with their numbers')"
+check "every check runs, length included" "" "$(/usr/bin/plutil -extract checks raw -o - "$hg" 2>/dev/null)"
+check "the Gemma 4 card says it humanizes" "yes" "$(contains "$(interp_call family_blurb gemma4it)" humanizes)"
+
+section "preset ids and names are unique per transform, and checks name only known checks"
+# The files of one transform (its variants, one per model family) share its id and name; the
+# picker lists the transform once. Two transforms must not share either.
+check "no transform has two files for one family" "" \
+    "$(for f in "$PRESETS"/*.json; do printf '%s %s\n' "$(/usr/bin/plutil -extract id raw -o - "$f")" "$(/usr/bin/plutil -extract family raw -o - "$f")"; done | /usr/bin/sort | /usr/bin/uniq -d)"
+check "the files of one transform share its name, and no two transforms share one" "" \
+    "$(for f in "$PRESETS"/*.json; do printf '%s %s\n' "$(/usr/bin/plutil -extract id raw -o - "$f")" "$(/usr/bin/plutil -extract name raw -o - "$f")"; done | /usr/bin/sort -u \
+        | /usr/bin/awk '{ id = $1; $1 = ""; ids[id]++; names[$0]++ } END { for (i in ids) if (ids[i] > 1) print i; for (n in names) if (names[n] > 1) print n }')"
 check "every checks word is numbers, script, length or language" "" \
     "$(for f in "$PRESETS"/*.json; do /usr/bin/plutil -extract checks raw -o - "$f" 2>/dev/null; echo; done \
         | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -x -e '' -e numbers -e script -e length -e language)"

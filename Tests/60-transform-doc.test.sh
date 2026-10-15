@@ -282,7 +282,7 @@ omc_run interp.tdoc.run
 INTERP_PDFUTIL_BIN="$saved_pdfutil"; export INTERP_PDFUTIL_BIN
 check "(the fake really switched the preset)" "$TEST_PRESETS/20-plain.json" "$(spool_file preset.file)"
 check_absent "nothing was published" "$(spool_dir)/job.json"
-check "the user is told to run again" "The transform changed while the document was being read. Click Rewrite again." \
+check "the user is told to run again" "The transform or model changed while the document was being read. Click Rewrite again." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 # Positive control: the same scan with no switch publishes.

@@ -73,14 +73,15 @@ if [ "$has_text_rc" -ne 0 ]; then
     exit 0
 fi
 
-# Reading a scanned PDF can take minutes, and the Transform picker stays live meanwhile. A switch in
-# that time has already restarted the broker with the NEW preset's settings (possibly another model
-# family), so publishing the OLD preset's job now would run it on the wrong broker and save it under
-# the old preset's name. Stop instead; the user's next Rewrite uses the preset now selected.
+# Reading a scanned PDF can take minutes, and the Transform and Model pickers stay live meanwhile.
+# A switch of transform, or of model to another family (which switches the variant), in that time
+# has already restarted the broker with the NEW preset's settings, so publishing the OLD preset's
+# job now would run it on the wrong broker and save it under the old preset's name. Stop instead;
+# the user's next Rewrite uses the preset now selected.
 current_preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
 if [ "$current_preset" != "$preset" ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
-    set_status "The transform changed while the document was being read. Click Rewrite again."
+    set_status "The transform or model changed while the document was being read. Click Rewrite again."
     exit 0
 fi
 

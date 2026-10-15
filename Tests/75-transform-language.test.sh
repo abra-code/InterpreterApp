@@ -59,7 +59,10 @@ section "the Humanizer lists the languages it was trained on"
 check "Humanize: English and Chinese" '["en","zh"]' \
     "$(/usr/bin/plutil -extract languages json -o - "$PRESETS/10-humanize.json" | /usr/bin/tr -d ' \n')"
 check "the Gemma 4 presets take any language" "" \
-    "$(for f in "$PRESETS"/[2-9]*.json; do /usr/bin/plutil -extract languages json -o - "$f" 2>/dev/null; done)"
+    "$(for f in "$PRESETS"/*.json; do
+        [ "$(/usr/bin/plutil -extract family raw -o - "$f")" = gemma4it ] || continue
+        /usr/bin/plutil -extract languages json -o - "$f" 2>/dev/null
+    done)"
 
 section "a text clearly in another language is refused by Humanize"
 reset_document
@@ -70,7 +73,7 @@ omc_control "$SRC_EDITOR" "Dzien dobry, to jest dlugi tekst po polsku."
 fake_answer langid 0 'pl'
 omc_run interp.transform.run
 check_absent "nothing was published" "$(spool_dir)/job.json"
-check "the status line says why" "Humanize works on English and Chinese text, and this looks like Polish." \
+check "the status line says why" "Humanizer works on English and Chinese text, and this looks like Polish. Choose a Gemma 4 model under Model to rewrite it." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 check "and Stop is off" "0" "$(ui_enabled "$STOP_BTN")"
@@ -135,7 +138,7 @@ omc_run interp.tdoc.run
 check_absent "nothing was published" "$(spool_dir)/job.json"
 check "langid read the converted text" "$(spool_dir)/input.plain.txt" \
     "$(fake_argv langid | /usr/bin/sed -n '/^--file$/{n;p;}')"
-check "the status line says why" "Humanize works on English and Chinese text, and this looks like Polish." \
+check "the status line says why" "Humanizer works on English and Chinese text, and this looks like Polish. Choose a Gemma 4 model under Model to rewrite it." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 fake_answer langid 0 'en'

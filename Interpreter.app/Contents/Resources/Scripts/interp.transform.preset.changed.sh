@@ -1,6 +1,7 @@
 # interp.transform.preset.changed - the Transform picker changed. Resolve the 1-based index through
-# the spool's presetfiles index, make it the window's preset (the poller follows: new model list
-# for the preset's family, broker restarted with its settings) and remember it for new windows.
+# the spool's presetfiles index, make it the window's transform (on the model last picked for it,
+# see select_transform; the poller follows: new model list for its families, broker restarted with
+# its settings) and remember it for new windows.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"
@@ -20,9 +21,13 @@ now=$(/bin/date +%s)
 
 sel=$(/usr/bin/sed -n "${idx}p" "$spool/presetfiles")
 [ -n "$sel" ] && [ -f "$sel" ] || exit 0
-[ "$sel" = "$(/bin/cat "$spool/preset.file" 2>/dev/null)" ] && exit 0
+# The same transform again (its variants share an id) is no switch.
+cur="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
+[ "$sel" = "$cur" ] && exit 0
+sel_id="$(preset_get "$sel" id)"
+[ -n "$sel_id" ] && [ -f "$cur" ] && [ "$sel_id" = "$(preset_get "$cur" id)" ] && exit 0
 
-apply_preset "$spool" "$sel"
-"$defaults_tool" write "$BUNDLE_ID" TransformPreset "$(preset_get "$sel" id)"
+select_transform "$spool" "$sel"
+"$defaults_tool" write "$BUNDLE_ID" TransformPreset "$sel_id"
 
 exit 0
