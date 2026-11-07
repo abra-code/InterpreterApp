@@ -44,7 +44,7 @@ fi
 # download one. The poller keeps this window's status/picker in sync meanwhile.
 model_dir=$(resolve_model_dir 2>/dev/null)
 if [ -z "$model_dir" ]; then
-    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.models"
+    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.models.offer"
 fi
 
 exit 0

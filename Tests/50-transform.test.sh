@@ -119,8 +119,8 @@ check "the poller runs in transform mode" "transform" "$(fake_arg_at interp.poll
 check "for this spool" "$(spool_dir)" "$(fake_arg_at interp.poll.sh 2)"
 # Nothing of the small preset's family is installed, so the transform chooser opens - and not the
 # translation one.
-check "the transform chooser was opened" "1" "$(chain_asked interp.tmodels)"
-check "the translation chooser was not" "0" "$(chain_asked interp.models)"
+check "the transform chooser was opened" "1" "$(chain_asked interp.tmodels.offer)"
+check "the translation chooser was not" "0" "$(chain_asked interp.models.offer)"
 
 section "an unknown saved preset falls back to the first one"
 reset_document
@@ -130,7 +130,7 @@ pref_set TransformPreset no-such-preset
 open_transform_window
 check "the first preset is selected" "1" "$(ui_value "$PRESET_PICKER")"
 check "and recorded" "$TEST_PRESETS/10-humanize.json" "$(spool_file preset.file)"
-check "with a model of its family installed, no chooser opens" "0" "$(chain_asked interp.tmodels)"
+check "with a model of its family installed, no chooser opens" "0" "$(chain_asked interp.tmodels.offer)"
 
 section "switching presets records the new one, and the window's own echo is ignored"
 reset_window

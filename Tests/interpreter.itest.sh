@@ -6,12 +6,13 @@
 # model chooser), the real UI poller, the private pasteboard handoff to the document window, the
 # open and save panels (answered by the test) and the end commands are what is checked.
 #
-# No model is ever downloaded or run. The applet's $HOME is the test's own, so its model library
-# starts empty: the launch shows the first-run state, and the model chooser it opens looks up the
-# catalog on Hugging Face (one small query per catalog row, no download;the test cannot stop them, see the
-# commit note). The test then puts a model folder in the library that has a config.json and no
-# weights: every window picks it up as installed, and mlx-agent refuses it in milliseconds, so the
-# windows stay at "Loading model" and Translate is never offered. Nothing is translated.
+# No model is ever downloaded or run, and nothing reaches the network. The applet's $HOME is the
+# test's own, so its model library starts empty: the launch shows the first-run state, and the
+# model chooser it opens by itself waits for Show Models before it asks Hugging Face for the
+# catalog (the test never clicks it). The test then puts a model folder in the library that has a
+# config.json and no weights: every window picks it up as installed, mlx-agent refuses it in
+# milliseconds, and after a second try the windows say they could not load it, so Translate is
+# never offered. Nothing is translated.
 #
 # Not touched: the language pickers and Swap. Their handlers save the choice with /usr/bin/defaults,
 # which writes the user's own preferences whatever $HOME says; the last section checks that the
@@ -25,6 +26,10 @@ check "the view ids imported from lib.interp.sh" "25 20 21 40 300 130 230 231" \
 
 SUPPORT="$ITEST_HOME/Library/Application Support/Interpreter"
 BUNDLE_ID="com.abracode.Interpreter"
+# The model chooser's status line and its Refresh button (models.window.json; the handlers spell
+# the numbers out).
+CHOOSER_STATUS=910
+CHOOSER_REFRESH=930
 
 # A view's property as the bridge gives it (JSON).
 property() { # <window> <view-id> <name>
@@ -86,7 +91,7 @@ choices_before="$(user_choices)"
 
 section "A bare launch with no model opens the translator and the model chooser over it"
 # The engine ran the main command at launch: no document, so interp.new; its init found no model
-# and chained to interp.models. Each window's state folder says which is which.
+# and chained to interp.models.offer. Each window's state folder says which is which.
 translator=""
 chooser=""
 for w in $(itest_windows); do
@@ -108,6 +113,16 @@ languages="$(/usr/bin/awk -F'\t' '$1 != "" && $2 != "" { n++ } END { print n }' 
 check "To lists every language in languages.tsv" "$languages" "$(entries "$to_options")"
 check "From lists them too, after Detect language" "$(( languages + 1 ))" "$(entries "$from_options")"
 check_contains "Detect language first" '["Detect language", ' "$from_options"
+# The chooser the app opened by itself asks before it contacts Hugging Face.
+check "the chooser says what Show Models does" \
+    "No model is installed yet. Show Models asks Hugging Face which ones fit your Mac." \
+    "$(itest_value "$chooser" "$CHOOSER_STATUS")"
+check "its Refresh button reads Show Models" "Show Models" "$(property "$chooser" "$CHOOSER_REFRESH" title | /usr/bin/tr -d '"')"
+check "no catalog load was started" "no no" \
+    "$([ -e "$SUPPORT/Cache/load.log" ] && printf yes || printf no) $([ -e "$SUPPORT/Cache/catalog.tsv" ] && printf yes || printf no)"
+# pgrep, not workers_on: a grep for the loader's path would count itself.
+check "and no loader runs" "0" \
+    "$(/usr/bin/pgrep -f -- "$ITEST_APP/Contents/Resources/Scripts/interp.models.load.sh" | /usr/bin/awk 'END { print NR }')"
 itest_close "$chooser" > /dev/null
 itest_wait_idle
 check "closing the chooser closes it" "0" "$(itest_windows | /usr/bin/grep -c -x -- "$chooser")"
@@ -115,14 +130,22 @@ check "and its end command removed its state" "no" "$([ -d "$SUPPORT/Downloads/.
 
 section "A model that appears in the library is picked up by the open window"
 # As after a download: the window's poller rescans the library every second. This model has no
-# weights, so mlx-agent refuses it and the window keeps waiting for it to load.
+# weights, so mlx-agent refuses it; the poller tries twice, then gives up and says why.
 /bin/mkdir -p "$SUPPORT/Models/itest-unloadable"
 printf '{}\n' > "$SUPPORT/Models/itest-unloadable/config.json"
 model_options="$(wait_for_property "$translator" "$MODEL_PICKER" options itest-unloadable 10)"
 check "the Model menu lists it" "2" "$(entries "$model_options")"
 check_contains "by its folder name" '"itest-unloadable"' "$model_options"
-check_contains "the window loads it" "Loading model" "$(wait_for_value "$translator" "$STATUS_TEXT" "Loading model" 10)"
+status="$(wait_for_value "$translator" "$STATUS_TEXT" "Could not load this model" 15)"
+check_contains "the window says it could not load it" "Could not load this model: " "$status"
+check_contains "with mlx-agent's reason" "Missing field 'model_type'" "$status"
 check "Translate stays off" "true" "$(property "$translator" "$TRANSLATE_BTN" disabled)"
+# Given up: no broker is started again, so its log stops growing at the two tries.
+failures() { /usr/bin/grep -c 'model load failed' "$SUPPORT/Sessions/$translator/agent.log" 2>/dev/null; }
+check "it tried twice" "2" "$(failures)"
+/bin/sleep 3
+check "and three seconds later no more" "2" "$(failures)"
+check "no broker is left for the window" "no" "$([ -e "$SUPPORT/Sessions/$translator/broker.pid" ] && printf yes || printf no)"
 
 section "A document dropped on the app opens the document window"
 printf 'Bonjour tout le monde.\n' > "$ITEST_WORK/notes.txt"
@@ -137,7 +160,8 @@ check "the document window took the dropped file" "$ITEST_WORK/notes.txt" "$(ite
 to_code="$(/bin/cat "$SUPPORT/Sessions/$doc/to.code" 2>/dev/null)"
 check "the output is named for the To language, next to the original" "$ITEST_WORK/notes-$to_code.txt" \
     "$(itest_value "$doc" "$OUTPUT_PATH_TEXT")"
-check_contains "it too waits for the model" "Loading model" "$(wait_for_value "$doc" "$STATUS_TEXT" "Loading model" 10)"
+check_contains "it too says the model cannot load" "Could not load this model" \
+    "$(wait_for_value "$doc" "$STATUS_TEXT" "Could not load this model" 15)"
 
 section "File > Open asks for the document through the open panel"
 itest_panels_clear

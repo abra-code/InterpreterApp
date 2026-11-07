@@ -386,6 +386,91 @@ kill_broker_pid() {   # $1 = pid
 
 pid_alive() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; /bin/kill -0 "$1" 2>/dev/null; }
 
+# A model that cannot load. mlx-agent map writes status.json {"state":"error","message":"Model
+# load failed: <reason>"}, prints the same to agent.log and exits (status 0); a GGUF install with
+# no .gguf spawns nothing at all (spawn_broker prints no pid). The poller took the dead broker for
+# a crash, cleared its status and respawned it on the next tick, every second, so the window said
+# "Loading model" forever. Now a broker that ended before it ever loaded (broker_never_loaded) is
+# spawned LOAD_ATTEMPTS_MAX times in a row, then the poller gives up and shows the reason, until
+# the selection or the model folder changes (spool/load.failed: "<broker key>|<folder
+# signature>", then the reason).
+LOAD_ATTEMPTS_MAX=2
+
+# True when the spool's broker never got its model loaded: no status yet, still "loading", or the
+# error mlx-agent reports for a failed load. Any other state means it loaded (a broker that dies
+# after that is a crash, and is respawned).
+broker_never_loaded() {   # $1 = spool
+    [ -f "$1/status.json" ] || return 0
+    local _state="$("$plutil" -extract state raw -o - "$1/status.json" 2>/dev/null)"
+    case "$_state" in
+        ''|loading) return 0 ;;
+        error) ;;
+        *) return 1 ;;
+    esac
+    local _msg="$("$plutil" -extract message raw -o - "$1/status.json" 2>/dev/null)"
+    case "$_msg" in
+        [Mm]odel\ load\ failed*) return 0 ;;
+    esac
+    return 1
+}
+
+# What identifies a model folder's contents: a download or reinstall makes a new folder (inode)
+# or rewrites config.json, and adding or removing a file changes the folder's time.
+model_dir_sig() {   # $1 = model dir
+    /usr/bin/stat -f '%i %Fm' "$1" "$1/config.json" 2>/dev/null | /usr/bin/tr '\n' ' '
+}
+
+# The reason the last broker gave for not loading: its status message, else what it appended to
+# agent.log since it was spawned (spool/broker.logstart holds the log's size then), else a plain
+# one. No final period: the status line adds its own sentence after it.
+load_failure_reason() {   # $1 = spool, $2 = the broker's pid as recorded (empty: none was spawned)
+    if [ -z "$2" ]; then
+        printf '%s\n' "its files are incomplete"
+        return 0
+    fi
+    local _reason="$("$plutil" -extract message raw -o - "$1/status.json" 2>/dev/null \
+        | /usr/bin/sed -n 's/^[Mm]odel load failed: *//p')"
+    if [ -z "$_reason" ]; then
+        local _start="$(/bin/cat "$1/broker.logstart" 2>/dev/null)"
+        case "$_start" in ''|*[!0-9]*) _start=0 ;; esac
+        _reason="$(/usr/bin/tail -c "+$(( _start + 1 ))" "$1/agent.log" 2>/dev/null \
+            | /usr/bin/sed -n 's/^.*[Mm]odel load failed: *//p' | /usr/bin/tail -1)"
+    fi
+    _reason="$(printf '%s' "$_reason" | /usr/bin/sed 's/[. ]*$//')"
+    printf '%s\n' "${_reason:-it stopped while loading}"
+}
+
+# Records one broker that ended without ever loading its model (no status, still "loading", or
+# mlx-agent's "Model load failed" error), for the model of broker key $2 in
+# folder $3. Returns 0 when that was the last attempt (load.failed is written: do not respawn),
+# 1 when the poller should try once more.
+note_load_failure() {   # $1 = spool, $2 = broker key, $3 = model dir, $4 = the broker's recorded pid
+    local _n="$(/bin/cat "$1/load.attempts" 2>/dev/null)"
+    case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+    _n=$(( _n + 1 ))
+    if [ "$_n" -lt "$LOAD_ATTEMPTS_MAX" ]; then
+        /usr/bin/printf '%s' "$_n" > "$1/load.attempts"
+        return 1
+    fi
+    {
+        /usr/bin/printf '%s|%s\n' "$2" "$(model_dir_sig "$3")"
+        load_failure_reason "$1" "$4"
+    } > "$1/load.failed"
+    /bin/rm -f "$1/load.attempts"
+    return 0
+}
+
+# True while load.failed still holds for the model of broker key $2 in folder $3; otherwise it
+# clears it, so the next spawn gets its full attempts.
+load_failed_for() {   # $1 = spool, $2 = broker key, $3 = model dir
+    [ -f "$1/load.failed" ] || return 1
+    local _rec="$(/usr/bin/head -1 "$1/load.failed" 2>/dev/null)"
+    local _sig="$(model_dir_sig "$3")"
+    [ "$_rec" = "$2|$_sig" ] && return 0
+    /bin/rm -f "$1/load.failed" "$1/load.attempts"
+    return 1
+}
+
 # Free space (bytes) on the volume that would hold a path. The path's nearest existing ancestor
 # is probed, so a not-yet-created target still reports its destination volume.
 disk_free_bytes() {   # $1 = path

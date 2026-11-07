@@ -31,7 +31,7 @@ fi
 preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
 installed="$(list_preset_model_dirs "$preset")"
 if [ -z "$installed" ]; then
-    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.tmodels"
+    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.tmodels.offer"
 fi
 
 exit 0

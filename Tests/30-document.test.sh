@@ -46,6 +46,14 @@ check "a window opened with no handoff says so" "No input document." \
     "$(ui_value "$STATUS_TEXT")"
 check "and records no input path" "" "$(input_path)"
 
+section "with no model installed, the document window offers the chooser that waits to be asked"
+check "a model was installed, so no chooser so far" "0" "$(chain_asked interp.models.offer)"
+reset_document
+omc_control_defaults doc.window
+omc_run interp.doc.init
+check "the chooser was opened" "1" "$(chain_asked interp.models.offer)"
+check "not the one that queries Hugging Face at once" "0" "$(chain_asked interp.models)"
+
 section "the default output is named for its language, sits next to the original, and never overwrites"
 doc="$(make_text_file report.txt 'text')"
 open_doc_window "$doc"

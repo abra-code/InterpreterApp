@@ -80,7 +80,7 @@ check "Humanize offers the Humanizer and then Gemma 4" "humanizer-12B-8bit gemma
     "$(interp_tcall list_preset_model_dirs "$HUMANIZER_PRESET" | /usr/bin/xargs -n1 /usr/bin/basename | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ $//')"
 check "Fix grammar offers Gemma 4 only" "gemma-4-12B-it-8bit" \
     "$(interp_tcall list_preset_model_dirs "$GRAMMAR_PRESET" | /usr/bin/xargs -n1 /usr/bin/basename)"
-check "a model installed for either family means no chooser" "0" "$(chain_asked interp.tmodels)"
+check "a model installed for either family means no chooser" "0" "$(chain_asked interp.tmodels.offer)"
 
 section "picking a model of the other family switches to its variant"
 fill_model_picker

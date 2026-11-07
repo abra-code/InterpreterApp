@@ -170,6 +170,23 @@
     },
     {
       "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.offer",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "models.window",
+        "WINDOW_TITLE": "Translation Models",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.models.offer.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.models.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.models.offer.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
       "COMMAND_ID": "interp.model.download",
       "EXECUTION_MODE": "exe_script_file",
       "ENVIRONMENT_VARIABLES": {
@@ -286,6 +303,23 @@
     {
       "NAME": "Interpreter",
       "COMMAND_ID": "interp.tmodels.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tmodels.offer",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "models.window",
+        "WINDOW_TITLE": "Text Transform Models",
+        "IS_BLOCKING": false,
+        "INIT_SUBCOMMAND_ID": "interp.tmodels.offer.init",
+        "END_CANCEL_SUBCOMMAND_ID": "interp.models.cancel"
+      }
+    },
+    {
+      "NAME": "Interpreter",
+      "COMMAND_ID": "interp.tmodels.offer.init",
       "EXECUTION_MODE": "exe_script_file"
     },
     {

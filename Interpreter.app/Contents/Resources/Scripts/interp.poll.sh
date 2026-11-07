@@ -224,12 +224,26 @@ ensure_broker() {
         [ "$IS_TRANSFORM" = 1 ] && retire_broker
         return 0        # no model yet; the UI phase handling reports it
     fi
+    local _key="$(broker_key "$_sel")"
+
+    # This model could not be loaded (see note_load_failure in lib.interp.sh): stay down, and let
+    # reflect_ui show why, until the selection or the model's folder changes.
+    if load_failed_for "$spool" "$_key" "$_sel"; then
+        return 0
+    fi
 
     if [ -f "$spool/broker.pid" ]; then
         local _bpid="$(/bin/cat "$spool/broker.pid" 2>/dev/null)"
         local _bmodel="$(/bin/cat "$spool/broker.model" 2>/dev/null)"
         if pid_alive "$_bpid"; then
-            [ "$_bmodel" = "$(broker_key "$_sel")" ] && return 0     # correct broker already running
+            if [ "$_bmodel" = "$_key" ]; then       # correct broker already running
+                # Loaded once: a later crash gets its retries afresh.
+                if [ -f "$spool/load.attempts" ]; then
+                    broker_never_loaded "$spool" || /bin/rm -f "$spool/load.attempts"
+                fi
+                return 0
+            fi
+            /bin/rm -f "$spool/load.attempts"
             kill_broker_pid "$_bpid"                 # model switched: retire the old broker
             # Wait for it to release its model weights before loading the new one, so a switch
             # never momentarily holds two models in memory. Escalate to SIGKILL if it does not go
@@ -244,6 +258,18 @@ ensure_broker() {
                 while pid_alive "$_bpid" && [ "$_w" -lt 15 ]; do /bin/sleep 0.2; _w=$(( _w + 1 )); done
                 pid_alive "$_bpid" && return 0        # still alive: try again next tick
             fi
+        elif [ "$_bmodel" = "$_key" ] && broker_never_loaded "$spool"; then
+            # The broker for this very model ended before it ever loaded it: it could not load
+            # the model. Try once more, then give up and say why (reflect_ui).
+            if note_load_failure "$spool" "$_key" "$_sel" "$_bpid"; then
+                # load.failed has the reason now; the dead broker's status would only show again
+                # once the record lifts.
+                /bin/rm -f "$spool/broker.pid" "$spool/broker.model" "$spool/status.json"
+                LAST_UI_SIG=""
+                return 0
+            fi
+        else
+            /bin/rm -f "$spool/load.attempts"     # another model's broker, or one that had loaded
         fi
         /bin/rm -f "$spool/broker.pid" "$spool/broker.model"
         # Clear the previous broker's status/result AND the previous translation's timing so the
@@ -254,6 +280,9 @@ ensure_broker() {
     fi
 
     disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+    # Where this broker's lines start in agent.log, for load_failure_reason.
+    /usr/bin/stat -f '%z' "$spool/agent.log" > "$spool/broker.logstart" 2>/dev/null \
+        || /usr/bin/printf '0' > "$spool/broker.logstart"
     local _npid
     if [ "$IS_TRANSFORM" = 1 ]; then
         _npid="$(spawn_transform_broker "$spool" "$_sel" "$(/bin/cat "$spool/preset.file" 2>/dev/null)")"
@@ -292,6 +321,12 @@ reflect_ui() {
         [ -f "$spool/ui.stale" ] && { /bin/rm -f "$spool/ui.stale"; LAST_UI_SIG=""; }
         [ -n "$_sel" ] && [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" != "$(broker_key "$_sel")" ] \
             && _state="loading"
+    fi
+    # The selected model could not be loaded (ensure_broker gave up on it, and has just cleared
+    # the record if the selection or the folder changed since).
+    if [ -n "$_sel" ] && [ -f "$spool/load.failed" ]; then
+        _state="loadfailed"
+        _msg="$(/usr/bin/sed -n 2p "$spool/load.failed" 2>/dev/null)"
     fi
 
     local _sig="$_state|$_chunk|$_total|$_msg|$_tps|$_eta"
@@ -334,6 +369,9 @@ reflect_ui() {
         loading)
             disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Loading model…" ;;
+        loadfailed)
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+            set_status "Could not load this model: ${_msg:-it stopped while loading}. Choose another model, or delete it and download it again." ;;
         ready)
             enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             # Fresh post-load state: show the model's measured speed so it can be compared.

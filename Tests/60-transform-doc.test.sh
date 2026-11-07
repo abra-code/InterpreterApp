@@ -64,7 +64,7 @@ check "and shown" "$OMCTEST_WORK/report-humanized.txt" "$(ui_value "$OUTPUT_PATH
 check "nothing is previewed yet" "" "$(ui_value "$QL_OUTPUT")"
 check "Rewrite starts off" "0" "$(ui_enabled "$TRANSLATE_BTN")"
 check "the button carries the preset's title" "Rewrite" "$(ui_prop "$TRANSLATE_BTN" title)"
-check "with a model installed, no chooser opens" "0" "$(chain_asked interp.tmodels)"
+check "with a model installed, no chooser opens" "0" "$(chain_asked interp.tmodels.offer)"
 
 section "the handoff is consumed, and is not the translator's"
 check "the key was cleared" "" "$(tdoc_handoff)"
@@ -86,8 +86,8 @@ use_shipped_presets
 pb_set "${INTERP_PB_PREFIX}INTERP_TDOC_INPUT_PATH" "$doc"
 omc_control_defaults transform.doc.window
 omc_run interp.tdoc.init
-check "the transform chooser was asked for" "1" "$(chain_asked interp.tmodels)"
-check "not the translation one" "0" "$(chain_asked interp.models)"
+check "the transform chooser was asked for" "1" "$(chain_asked interp.tmodels.offer)"
+check "not the translation one" "0" "$(chain_asked interp.models.offer)"
 
 section "an existing file is never overwritten, and a preset switch renames the output"
 use_test_presets

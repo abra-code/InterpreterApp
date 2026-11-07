@@ -2,7 +2,7 @@
 # catalog (models.catalog.tsv x Hugging Face), curates it against this Mac's RAM into grouped
 # sections (Best Quality / Recommended / Faster), and builds one model CARD per curated row at
 # runtime via omc_insert_element. Launched by interp.models.init and interp.models.refresh.
-#   args: <chooser_window_uuid>
+#   args: <chooser_window_uuid> [cached]   (cached: paint the cache's cards and fetch nothing)
 # Not an OMC command - run directly via /bin/sh.
 #
 # Perceived latency is handled twice over: a fresh window WARM-STARTS from the previous load's
@@ -153,6 +153,10 @@ insert_cards() {   # $1 = curated file
     [ "$seen_rec" = 1 ]  && "$dialog" "$window_uuid" 1200 omc_show
     [ "$seen_fast" = 1 ] && "$dialog" "$window_uuid" 1300 omc_show
 
+    # The download poller may have pushed a row's state before its card existed (always so in a
+    # chooser that waited for Show Models): forget its sigs, so it re-pushes onto the new cards.
+    /bin/rm -f "$marker"/row.*.sig
+
     render_sig "$1" > "$marker/render.sig"
 }
 
@@ -162,6 +166,14 @@ if [ -s "$CACHE_DIR/curated.tsv" ] && [ ! -f "$marker/cards" ]; then
     insert_cards "$CACHE_DIR/curated.tsv"
     warm=1
     "$dialog" "$window_uuid" 910 "Checking for updates…"
+fi
+
+# A chooser the app opened by itself (interp.models.init, offer mode) gets only the cards an
+# earlier check left in the cache: nothing is fetched until the user clicks Show Models.
+if [ "${2:-}" = cached ]; then
+    [ "$warm" = 1 ] && "$dialog" "$window_uuid" 910 "No model is installed yet. These are the models found last time; Show Models asks Hugging Face again."
+    spinner_done
+    exit 0
 fi
 
 # Two overlapping loads (reopen during a load, or a fast double Refresh) share these cache files,

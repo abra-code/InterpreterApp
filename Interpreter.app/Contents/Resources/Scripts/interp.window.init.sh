@@ -36,10 +36,11 @@ fi
     < /dev/null > "$spool/poll.log" 2>&1 &
 
 # First run (no model installed yet): open the model chooser over the translator so the user
-# can download one. The poller keeps the translator's status/picker in sync meanwhile.
+# can download one. The offer chooser asks before it contacts Hugging Face (interp.models.init).
+# The poller keeps the translator's status/picker in sync meanwhile.
 model_dir=$(resolve_model_dir 2>/dev/null)
 if [ -z "$model_dir" ]; then
-    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.models"
+    "$next_command" "$OMC_CURRENT_COMMAND_GUID" "interp.models.offer"
 fi
 
 exit 0

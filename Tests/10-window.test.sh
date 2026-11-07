@@ -40,13 +40,15 @@ check "and this spool"   "$(spool_dir)"              "$(fake_arg_at interp.poll.
 check "with no mode argument" "" "$(fake_arg_at interp.poll.sh 3)"
 
 section "with a model already installed, the chooser does not barge in"
-check "no chooser was opened" "0" "$(chain_asked interp.models)"
+check "no chooser was opened" "0" "$(chain_asked interp.models.offer)"
 
 section "with no model at all, the chooser opens over the translator"
 reset_document
 omc_control_defaults interpreter.window
 omc_run interp.window.init
-check "the model chooser was opened" "1" "$(chain_asked interp.models)"
+check "the model chooser was opened" "1" "$(chain_asked interp.models.offer)"
+# interp.models is the chooser the user opens, which queries Hugging Face at once.
+check "the one that waits for the user to ask" "0" "$(chain_asked interp.models)"
 wait_for_calls interp.poll.sh 1
 check "and the poller still started, to keep the window in sync" "1" \
     "$(fake_calls interp.poll.sh)"
@@ -56,7 +58,7 @@ reset_document
 make_empty_model_dir "half-downloaded-model" >/dev/null
 omc_control_defaults interpreter.window
 omc_run interp.window.init
-check "the chooser opened anyway" "1" "$(chain_asked interp.models)"
+check "the chooser opened anyway" "1" "$(chain_asked interp.models.offer)"
 check "and resolve_model_dir found nothing" "no" "$(interp_is resolve_model_dir)"
 
 section "a GGUF install counts exactly as an MLX one does"
@@ -71,7 +73,7 @@ omc_run interp.window.init
 # The two engines are meant to be indistinguishable to everything above
 # model_installed_at, so a gguf-only library must not trigger the first-run
 # chooser.
-check "so a gguf-only library is not a first run" "0" "$(chain_asked interp.models)"
+check "so a gguf-only library is not a first run" "0" "$(chain_asked interp.models.offer)"
 
 section "the language pickers are filled and a selection restored"
 reset_document
@@ -443,6 +445,67 @@ omctest_setvar OMC_OBJ_TEXT ""
 omc_run interp.service.text
 check "the window still opened" "1" "$(chain_asked interp.new)"
 check "with no handoff"         ""  "$(service_handoff)"
+
+# The poller itself does not run under omctest (it is a recorder here), so the load-failure rules
+# it follows are checked through the library functions it calls; the itest runs the real poller
+# on a model that cannot load.
+section "a broker that could not load its model: the reason is read from its own log lines"
+reset_document
+spool="$(spool_dir)"
+/bin/mkdir -p "$spool"
+printf '[mlx-agent map] model load failed: an older broker reason\n' > "$spool/agent.log"
+/usr/bin/stat -f '%z' "$spool/agent.log" > "$spool/broker.logstart"
+printf "[mlx-agent map] model load failed: Failed to parse config.json: Missing field 'model_type'.\n" \
+    >> "$spool/agent.log"
+check "the last broker's reason, without its period" \
+    "Failed to parse config.json: Missing field 'model_type'" \
+    "$(interp_call load_failure_reason "$spool" 4242)"
+/usr/bin/stat -f '%z' "$spool/agent.log" > "$spool/broker.logstart"
+check "a broker that said nothing" "it stopped while loading" "$(interp_call load_failure_reason "$spool" 4242)"
+check "no broker spawned at all (a GGUF install without its file)" "its files are incomplete" \
+    "$(interp_call load_failure_reason "$spool" "")"
+# What mlx-agent map leaves for a model it cannot load.
+printf '%s\n' '{"message":"Model load failed: Missing field '"'"'model_type'"'"'","state":"error"}' > "$spool/status.json"
+check "the status message comes first" "Missing field 'model_type'" "$(interp_call load_failure_reason "$spool" 4242)"
+
+section "a broker that never loaded is told apart from one that crashed later"
+interp_call broker_never_loaded "$spool"
+check "mlx-agent's load error" "0" "$?"
+printf '%s\n' '{"state":"loading"}' > "$spool/status.json"
+interp_call broker_never_loaded "$spool"
+check "still loading" "0" "$?"
+/bin/rm -f "$spool/status.json"
+interp_call broker_never_loaded "$spool"
+check "no status at all" "0" "$?"
+printf '%s\n' '{"state":"ready","tok_per_sec":40}' > "$spool/status.json"
+interp_call broker_never_loaded "$spool"
+check "a broker that reported ready had loaded" "1" "$?"
+printf '%s\n' '{"message":"the job file is unreadable","state":"error"}' > "$spool/status.json"
+interp_call broker_never_loaded "$spool"
+check "and another error is not a failed load" "1" "$?"
+/bin/rm -f "$spool/status.json"
+
+section "the poller tries a model twice, then gives up until the selection or the folder changes"
+model="$(make_mlx_model translategemma-12b-4bit)"
+interp_call note_load_failure "$spool" "$model" "$model" 4242
+check "the first failure asks for another try" "1" "$?"
+check "and is counted" "1" "$(spool_file load.attempts)"
+check_absent "nothing is given up yet" "$spool/load.failed"
+interp_call note_load_failure "$spool" "$model" "$model" 4242
+check "the second gives up" "0" "$?"
+check_exists "it says so for the poller" "$spool/load.failed"
+check "with the reason for the window" "it stopped while loading" "$(/usr/bin/sed -n 2p "$spool/load.failed")"
+check_absent "and the count starts over" "$spool/load.attempts"
+interp_call load_failed_for "$spool" "$model" "$model"
+check "the same model in the same folder stays given up" "0" "$?"
+interp_call load_failed_for "$spool" "$model|other-preset" "$model"
+check "another selection lifts it" "1" "$?"
+check_absent "and clears the record" "$spool/load.failed"
+interp_call note_load_failure "$spool" "$model" "$model" 4242
+interp_call note_load_failure "$spool" "$model" "$model" 4242
+printf 'x' > "$model/tokenizer.json"
+interp_call load_failed_for "$spool" "$model" "$model"
+check "a change in the model's folder lifts it too" "1" "$?"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids" "" "$(ui_unknown_writes)"

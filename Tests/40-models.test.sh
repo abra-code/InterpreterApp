@@ -162,6 +162,71 @@ check_absent "the marker directory is gone" "$(chooser_marker)"
 # reconnects to them rather than restarting them.
 check_exists "the downloads directory survives" "$(downloads_dir)"
 
+# The chooser a window opens by itself when no model is installed (interp.models.offer) must not
+# contact Hugging Face before the user asks: the catalog query is one request per catalog row.
+section "a chooser the app opened by itself loads nothing until the user asks"
+reset_document
+machine_ram_gb 32
+omc_control_defaults models.window
+omc_run interp.models.offer.init
+check_status "init ran" 0
+check_exists "the chooser got its marker directory" "$(chooser_marker)"
+check "Recommended is hidden" "0" "$(ui_visible "$SECTION_RECOMMENDED_ID")"
+check "the status line says what the button does" \
+    "No model is installed yet. Show Models asks Hugging Face which ones fit your Mac." \
+    "$(ui_value "$CHOOSER_STATUS_ID")"
+check "Refresh reads Show Models" "Show Models" "$(ui_prop "$CHOOSER_REFRESH_ID" title)"
+# The download-state poller reads local state only, so it starts as for any chooser; waiting for
+# it also gives a wrongly started loader the same time to show up.
+wait_for_calls interp.models.poll.sh 1
+check "the download-state poller started" "1" "$(fake_calls interp.models.poll.sh)"
+check "no catalog load was started" "0" "$(fake_calls interp.models.load.sh)"
+check "and no request was made" "0" "$(fake_calls curl)"
+
+section "Show Models starts the load and turns back into Refresh"
+omc_run interp.models.refresh
+wait_for_calls interp.models.load.sh 1
+check "the loader ran" "1" "$(fake_calls interp.models.load.sh)"
+check "for this window" "$OMC_ACTIONUI_WINDOW_UUID" "$(fake_arg_at interp.models.load.sh 1)"
+check "the status line explains the wait" "Finding the best models for your Mac…" \
+    "$(ui_value "$CHOOSER_STATUS_ID")"
+check "the button reads Refresh again" "Refresh" "$(ui_prop "$CHOOSER_REFRESH_ID" title)"
+omc_run interp.models.refresh
+wait_for_calls interp.models.load.sh 2
+check "a second click is a plain Refresh" "Refreshing…" "$(ui_value "$CHOOSER_STATUS_ID")"
+omc_run interp.models.cancel
+
+# Cards an earlier check left in the cache come back without the network, so a download the user
+# started, running or failed, still shows on its card in a chooser the app opened by itself.
+section "a chooser the app opened by itself shows the cached cards, and still asks nothing"
+reset_document
+omc_control_defaults models.window
+write_curated \
+  "recommended|milmmt|abracode|milmmt-46-12b-4bit|MiLMMT-46 12B (4-bit)|1000|0|Near-top quality."
+omc_run interp.models.offer.init
+check_status "init ran" 0
+wait_for_calls interp.models.load.sh 1
+check "the loader was started" "1" "$(fake_calls interp.models.load.sh)"
+check "to paint the cache only" "cached" "$(fake_arg_at interp.models.load.sh 2)"
+check "and no request was made" "0" "$(fake_calls curl)"
+check "Refresh still reads Show Models" "Show Models" "$(ui_prop "$CHOOSER_REFRESH_ID" title)"
+omc_run interp.models.cancel
+/bin/rm -f "$(cache_dir)/curated.tsv"
+
+section "the Text Transform chooser the app opened by itself waits for the user too"
+reset_document
+omc_control_defaults models.window
+omc_run interp.tmodels.offer.init
+check_status "init ran" 0
+check_exists "it is bound to the transform library" "$(transform_chooser_marker)"
+check "Refresh reads Show Models" "Show Models" "$(ui_prop "$CHOOSER_REFRESH_ID" title)"
+wait_for_calls interp.models.poll.sh 1
+check "no catalog load was started" "0" "$(fake_calls interp.models.load.sh)"
+omc_run interp.models.refresh
+wait_for_calls interp.models.load.sh 1
+check "Show Models starts it" "1" "$(fake_calls interp.models.load.sh)"
+omc_run interp.models.cancel
+
 section "Download spawns one worker, for the row that was clicked"
 open_chooser
 write_curated \

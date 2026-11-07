@@ -86,6 +86,7 @@ SECTION_RECOMMENDED_ID=1200
 SECTION_FASTER_ID=1300
 CHOOSER_SPINNER_ID=911
 CHOOSER_STATUS_ID=910
+CHOOSER_REFRESH_ID=930
 
 # ---------------------------------------------------------------------------
 # The seam: point the applet's outside world at the fakes
