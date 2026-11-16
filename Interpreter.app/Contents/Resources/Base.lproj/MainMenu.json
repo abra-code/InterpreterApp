@@ -5,7 +5,7 @@
     "children": [
       { "type": "Button",
         "properties": {
-          "title": "New",
+          "title": "New Translation",
           "actionID": "interp.new",
           "keyboardShortcut": { "key": "n", "modifiers": ["command"] }
         }
@@ -25,7 +25,7 @@
     "children": [
       { "type": "Button",
         "properties": {
-          "title": "Open…",
+          "title": "Open for Translation...",
           "actionID": "interp.open",
           "keyboardShortcut": { "key": "o", "modifiers": ["command"] }
         }
