@@ -113,6 +113,21 @@ broker_key() {   # $1 = selected model dir
 # logic below can call them unconditionally.
 enable_swap()  { [ "$MODE" = text ] && enable_ctrl "$SWAP_BTN"; }
 disable_swap() { [ "$MODE" = text ] && disable_ctrl "$SWAP_BTN"; }
+# The run button and Estimate Time are on and off together: either one queues a request.
+enable_run()  { enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$ESTIMATE_BTN"; }
+disable_run() { disable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$ESTIMATE_BTN"; }
+
+# " (about 25s)" for the idle line, when the model's load time was measured on this Mac.
+idle_load_note() {   # $1 = model folder
+    [ -n "$1" ] || return 0
+    local _s="$(speed_get model "$(/usr/bin/basename "$1")" 4)"
+    case "$_s" in ''|*[!0-9]*) return 0 ;; esac
+    /usr/bin/printf ' (about %s)' "$(format_duration "$_s")"
+}
+
+# A request of this window waits in the queue: a job (job.next.json) or an Estimate Time request
+# for a model never measured here (estimate.next). Both wait, make room and load the same way.
+request_queued() { [ -f "$spool/job.next.json" ] || [ -f "$spool/estimate.next" ]; }
 
 # Cross-tick state (globals, UPPERCASE) mutated by the functions below.
 LAST_MODELS="__unset__"   # signature of the installed-model set (rebuild the picker on change).
@@ -265,7 +280,7 @@ ensure_broker() {
                 # do not let it take the memory for nothing. Not one in "error": that is a failed
                 # idle reload, which holds no model and whose message the window must keep
                 # showing (advance_job retires it when the next job comes).
-                if [ ! -f "$spool/load.wanted" ] && [ ! -f "$spool/job.next.json" ] \
+                if [ ! -f "$spool/load.wanted" ] && ! request_queued \
                     && ! job_active "$spool" && broker_never_loaded "$spool"; then
                     local _bstate="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
                     if [ "$_bstate" != error ]; then
@@ -323,11 +338,13 @@ ensure_broker() {
 
     # No broker is running for the selection. Load only for a job whose turn it is (advance_job
     # wrote load.wanted after making room): opening a window or picking a model loads nothing.
-    # The job is checked too: Stop may have withdrawn it since advance_job looked.
-    [ -f "$spool/load.wanted" ] && [ -f "$spool/job.next.json" ] || return 0
+    # The request is checked too: Stop may have withdrawn it since advance_job looked.
+    [ -f "$spool/load.wanted" ] && request_queued || return 0
 
     /bin/rm -f "$spool/evicted"
-    disable_ctrl "$TRANSLATE_BTN"; disable_swap
+    # When it started, for the load time learn_speed records.
+    /usr/bin/printf '%s' "$(/bin/date +%s)" > "$spool/broker.spawned"
+    disable_run; disable_swap
     # Where this broker's lines start in agent.log, for load_failure_reason.
     /usr/bin/stat -f '%z' "$spool/agent.log" > "$spool/broker.logstart" 2>/dev/null \
         || /usr/bin/printf '0' > "$spool/broker.logstart"
@@ -352,14 +369,16 @@ advance_job() {
     # No queued job: a load.wanted left now is stale (a Stop withdrew the job while this poller was
     # making room, then the poller wrote it). Left in place, ensure_broker would load for nothing,
     # and load again whenever another window unloaded the model.
-    if [ ! -f "$spool/job.next.json" ]; then
+    if ! request_queued; then
         /bin/rm -f "$spool/load.wanted"
         return 0
     fi
+    local _req="$spool/job.next.json"
+    [ -f "$_req" ] || _req="$spool/estimate.next"
     if [ ! -f "$spool/queue.entry" ]; then
         # The handler enqueues right after it writes the job. An entry still missing seconds
         # later means it never did (killed in between): queue the job from here.
-        local _mt="$(/usr/bin/stat -f '%m' "$spool/job.next.json" 2>/dev/null)"
+        local _mt="$(/usr/bin/stat -f '%m' "$_req" 2>/dev/null)"
         case "$_mt" in ''|*[!0-9]*) return 0 ;; esac
         [ $(( $(/bin/date +%s) - _mt )) -ge 5 ] || return 0
         queue_enqueue "$spool" "$(window_job_label)"
@@ -374,7 +393,7 @@ advance_job() {
         LAST_UI_SIG=""
         return 0
     fi
-    if [ "$IS_TRANSFORM" = 1 ] \
+    if [ "$IS_TRANSFORM" = 1 ] && [ -f "$spool/job.next.json" ] \
         && [ "$(/bin/cat "$spool/job.preset" 2>/dev/null)" != "$(/bin/cat "$spool/preset.file" 2>/dev/null)" ]; then
         withdraw_queued_job "$spool" "The transform changed while the job was waiting. Click $BUTTON_NAME again."
         LAST_UI_SIG=""
@@ -407,12 +426,76 @@ advance_job() {
         return 0
     fi
 
+    # Loaded, for an Estimate Time request: answer it from what the load measured (learn_speed
+    # ran earlier in this tick), and leave the model loaded for the job that likely follows. The
+    # rename fails when Stop withdrew the request a moment ago.
+    if [ ! -f "$spool/job.next.json" ]; then
+        /bin/mv "$spool/estimate.next" "$spool/estimate.answering" 2>/dev/null || return 0
+        local _chars="$(/bin/cat "$spool/estimate.answering" 2>/dev/null)"
+        /bin/rm -f "$spool/estimate.answering" "$spool/job.next.model" "$spool/load.wanted"
+        # The load ended after learn_speed's copy of status.json in this tick: record it first.
+        [ -f "$spool/broker.spawned" ] && learn_speed
+        local _answer="$(estimate_sentence "$_chars" "$_sel" "$(job_speed_key "$spool" "$_sel")" 1)"
+        [ -n "$_answer" ] || _answer="The model is loaded. Its speed is measured during the first run, so there is no estimate yet."
+        /usr/bin/printf '%s' "$_answer" > "$spool/job.notice"
+        /bin/rm -f "$spool/evicted"
+        LAST_UI_SIG=""
+        return 0
+    fi
+
     # Loaded: hand the job over. The rename fails when Stop withdrew the job a moment ago. The
     # timing starts here, so the elapsed time shown at "done" is the job's own.
     /bin/mv "$spool/job.next.json" "$spool/job.json" 2>/dev/null || return 0
     /bin/rm -f "$spool/job.next.model" "$spool/load.wanted" "$spool/translate.elapsed"
     /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$spool/translate.start" 2>/dev/null
     LAST_UI_SIG=""
+}
+
+# Remember what a load and a finished job measured (Speeds.tsv, lib.interp.load.sh), for the
+# Estimate Time button. Runs before advance_job, which answers an estimate request from it, and
+# before reflect_ui, which spends the job's timing stamp (translate.start) on the "done" line.
+LEARNED_EPOCH=""
+# The running job's timing stamp, kept from the ticks before "done": a job that finishes between
+# this function's copy of status.json and reflect_ui's has its stamp spent by reflect_ui first.
+LEARN_START=""
+learn_speed() {
+    local _stamp="$(/bin/cat "$spool/translate.start" 2>/dev/null)"
+    [ -n "$_stamp" ] && LEARN_START="$_stamp"
+    [ -f "$spool/status.json" ] || return 0
+    local _model="$(/bin/cat "$spool/broker.model" 2>/dev/null)"
+    _model="${_model%%|*}"
+    [ -n "$_model" ] || return 0
+    local _snap="$spool/status.learn.json"
+    /bin/cp "$spool/status.json" "$_snap" 2>/dev/null || return 0
+    local _st="$("$plutil" -extract state raw -o - "$_snap" 2>/dev/null)"
+    local _tps="$("$plutil" -extract tok_per_sec raw -o - "$_snap" 2>/dev/null)"
+
+    # The first state after "loading" of a broker this poller spawned: the load is over.
+    if [ -f "$spool/broker.spawned" ]; then
+        case "$_st" in
+            ready|mapping|done|cancelled)
+                local _t0="$(/bin/cat "$spool/broker.spawned" 2>/dev/null)"
+                case "$_t0" in
+                    ''|*[!0-9]*) ;;
+                    *) learn_model_load "$_model" "$(( $(/bin/date +%s) - _t0 ))" "$_tps" ;;
+                esac
+                /bin/rm -f "$spool/broker.spawned" ;;
+            error) /bin/rm -f "$spool/broker.spawned" ;;
+        esac
+    fi
+
+    # This job finished: its time per character.
+    [ "$_st" = done ] || return 0
+    local _ep="$("$plutil" -extract epoch raw -o - "$_snap" 2>/dev/null)"
+    local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
+    [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] && [ "$_ep" != "$LEARNED_EPOCH" ] || return 0
+    LEARNED_EPOCH="$_ep"
+    local _start="$LEARN_START"
+    LEARN_START=""
+    [ -n "$_start" ] || return 0
+    local _secs="$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time - $ARGV[0]' "$_start" 2>/dev/null)"
+    local _chars="$(LC_ALL=en_US.UTF-8 /usr/bin/wc -m < "$spool/source.$_ep.txt" 2>/dev/null | /usr/bin/tr -d ' ')"
+    learn_job "$_model" "$(job_speed_key "$spool" "$_model")" "$_secs" "$_chars" "$_tps"
 }
 
 # Leave the queue once the job is over (done, cancelled, failed, or its broker died), so the next
@@ -422,7 +505,7 @@ release_finished_job() {
     # writes a new job and a new entry, which must not go with the old job's release.
     local _entry="$(/bin/cat "$spool/queue.entry" 2>/dev/null)"
     [ -n "$_entry" ] || return 0
-    [ -f "$spool/job.next.json" ] && return 0
+    request_queued && return 0
     job_active "$spool" && return 0
     [ "$(/bin/cat "$spool/queue.entry" 2>/dev/null)" = "$_entry" ] || return 0
     queue_release "$spool"
@@ -481,7 +564,7 @@ reflect_ui() {
     # first of them), or for its own model to load (pending). A job just handed over, whose broker
     # still reports the previous job, is shown as started rather than as that job's end.
     local _qn=0
-    if [ -f "$spool/job.next.json" ] && [ "$_state" != loadfailed ]; then
+    if request_queued && [ "$_state" != loadfailed ]; then
         local _ahead="$(queue_ahead_of "$spool")"
         if [ -f "$spool/queue.entry" ] && [ -z "$_ahead" ]; then
             _state="pending"
@@ -542,13 +625,13 @@ reflect_ui() {
     local _es _cn _tn _cur _st _nw
     case "$_state" in
         nomodel)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "$NO_MODEL_TEXT" ;;
         idle)
-            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
-            set_status "${_msg:-Ready. The model loads when you click $BUTTON_NAME.}" ;;
+            enable_run; enable_swap; disable_ctrl "$STOP_BTN"
+            set_status "${_msg:-Ready. The model loads when you click $BUTTON_NAME$(idle_load_note "$_sel").}" ;;
         queued)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; enable_ctrl "$STOP_BTN"
             if [ "$_qn" -gt 1 ]; then
                 set_status "Waiting for $_qn jobs in other windows to finish, first: ${_msg}…"
             elif [ -n "$_msg" ]; then
@@ -557,24 +640,25 @@ reflect_ui() {
                 set_status "Waiting for another window to finish…"
             fi ;;
         pending)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
-            set_status "Loading model…" ;;
+            disable_run; disable_swap; enable_ctrl "$STOP_BTN"
+            if [ -f "$spool/job.next.json" ]; then set_status "Loading model…"
+            else set_status "Loading the model to measure its speed…"; fi ;;
         starting)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; enable_ctrl "$STOP_BTN"
             set_status "$VERB_ING$_from_note…" ;;
         loading)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Loading model…" ;;
         loadfailed)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Could not load this model: ${_msg:-it stopped while loading}. Choose another model, or delete it and download it again." ;;
         ready)
-            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
+            enable_run; enable_swap; disable_ctrl "$STOP_BTN"
             # Fresh post-load state: show the model's measured speed so it can be compared.
             if [ -n "$_tpsN" ]; then set_status "Ready — $_tpsN tok/s"
             else set_status "Ready"; fi ;;
         mapping)
-            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            disable_run; disable_swap; enable_ctrl "$STOP_BTN"
             # status.json `chunk` is a COMPLETED count (0..total); the chunk being worked on is
             # completed+1. Show that as a human 1-based "chunk N of M", capped at M, and only when
             # there is more than one chunk (a single chunk needs no counter).
@@ -593,7 +677,7 @@ reflect_ui() {
             [ -z "$_tail" ] && _tail="…"
             set_status "$_base$_tail" ;;
         done)
-            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
+            enable_run; enable_swap; disable_ctrl "$STOP_BTN"
             # First time we observe this job's completion, turn the dispatch stamp into an elapsed
             # string; afterwards just reuse it (the done state re-renders on label changes).
             if [ -f "$spool/translate.start" ]; then
@@ -615,10 +699,10 @@ reflect_ui() {
             fi
             set_status "Ready$_dtail" ;;
         cancelled)
-            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
+            enable_run; enable_swap; disable_ctrl "$STOP_BTN"
             set_status "Cancelled." ;;
         error)
-            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
+            enable_run; enable_swap; disable_ctrl "$STOP_BTN"
             set_status "Error: ${_msg:-unknown}" ;;
     esac
     # Said last, over the line the state just wrote (the done branch still records its timing).
@@ -694,6 +778,7 @@ while [ -d "$spool" ]; do
     sync_models
     sync_variant
     sync_languages
+    learn_speed
     advance_job
     ensure_broker
     reflect_ui

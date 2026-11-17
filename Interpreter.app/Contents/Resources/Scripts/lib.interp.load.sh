@@ -30,6 +30,11 @@
 # room, spawns the broker, waits for it to load, and only then moves job.next.json to job.json.
 # The entry is released when the job reaches a terminal state (done, cancelled, error), when
 # Stop withdraws the queued job, or when the broker dies.
+#
+# An ESTIMATE request (estimate.next, holding a character count; see "speed and time estimates"
+# below) travels the same way, for a model never measured on this Mac: it waits its turn, makes
+# room, loads the model, and is answered from the measured speed once the model is loaded.
+# job.next.model names the model of whichever request is queued.
 
 [ -n "${__INTERP_LOAD_LIB:-}" ] && return 0
 __INTERP_LOAD_LIB=1
@@ -345,7 +350,7 @@ job_active() {   # $1 = spool
 # Withdraw a job that has not been handed to the broker yet (Stop, or a model or transform switch
 # while it waited). $2 is said in the status line while the window is idle (job.notice).
 withdraw_queued_job() {   # $1 = spool, [$2 = notice]
-    /bin/rm -f "$1/job.next.json" "$1/job.next.model" "$1/load.wanted"
+    /bin/rm -f "$1/job.next.json" "$1/estimate.next" "$1/job.next.model" "$1/load.wanted"
     queue_release "$1"
     if [ -n "${2:-}" ]; then
         /usr/bin/printf '%s' "$2" > "$1/job.notice"
@@ -356,4 +361,123 @@ withdraw_queued_job() {   # $1 = spool, [$2 = notice]
 # A translation job's queue label.
 translation_job_label() {   # $1 = model folder
     /usr/bin/printf 'Translation with %s' "$(model_display_label "$1")"
+}
+
+# --- speed and time estimates -----------------------------------------------------------------
+#
+# The model no longer loads when a window opens, so its speed is no longer shown on its own. What
+# each load and each finished job measured is remembered instead, in Speeds.tsv (both libraries,
+# translate and transform, share it), and the Estimate Time button (interp.estimate) answers from
+# it without loading anything. Only a model never measured on this Mac is loaded for the answer,
+# through the same queue and memory budget as a job (estimate.next, see advance_job).
+#
+# Two kinds of line, tab-separated:
+#   model <TAB> <model folder name> <TAB> <tok/s> <TAB> <load seconds>
+#   job   <TAB> <job key>           <TAB> <seconds per 1000 characters>
+# The job key is "translate|<model folder name>" or "<transform id>|<model folder name>": a
+# summary writes far less than it reads, a translation about as much, so the time per character is
+# kept per transform as well as per model.
+#
+# Seconds per character, learned from finished jobs, is the better estimate: it includes reading
+# the input, chunking and every per-chunk cost. Before any job, the warm-up tok/s gives a rough one,
+# assuming ESTIMATE_TOKENS_PER_CHAR output tokens per input character (about 4 characters per token
+# in English; more tokens for scripts such as Chinese, so it is rough).
+SPEEDS_FILE="$APP_SUPPORT/Speeds.tsv"
+ESTIMATE_TOKENS_PER_CHAR="0.3"
+# Jobs shorter than this are mostly fixed cost and would teach a per-character time far too high.
+LEARN_MIN_CHARS=200
+
+speed_get() {   # $1 = model | job, $2 = key, $3 = field number (3 or 4)
+    [ -f "$SPEEDS_FILE" ] || return 0
+    /usr/bin/awk -F'\t' -v t="$1" -v k="$2" -v f="$3" \
+        '$1 == t && $2 == k { v = $f } END { if (v != "") print v }' "$SPEEDS_FILE" 2>/dev/null
+}
+
+# Replace the line of this type and key (rewritten whole, then renamed into place).
+speed_put() {   # $1 = model | job, $2 = key, $3... = values
+    /bin/mkdir -p "$APP_SUPPORT" || return 1
+    local _t="$1" _k="$2"
+    shift 2
+    local _tmp="$SPEEDS_FILE.$$"
+    {
+        [ -f "$SPEEDS_FILE" ] && /usr/bin/awk -F'\t' -v t="$_t" -v k="$_k" '!($1 == t && $2 == k)' "$SPEEDS_FILE"
+        /usr/bin/printf '%s\t%s' "$_t" "$_k"
+        local _v
+        for _v in "$@"; do /usr/bin/printf '\t%s' "$_v"; done
+        /usr/bin/printf '\n'
+    } > "$_tmp" && /bin/mv "$_tmp" "$SPEEDS_FILE"
+}
+
+# The job key of a window's job on a model (see above). A window with a preset.file is a transform
+# window.
+job_speed_key() {   # $1 = spool, $2 = model folder
+    local _preset="$(/bin/cat "$1/preset.file" 2>/dev/null)"
+    local _kind="translate"
+    if [ -n "$_preset" ]; then
+        _kind="$("$plutil" -extract id raw -o - "$_preset" 2>/dev/null)"
+        [ -n "$_kind" ] || _kind="transform"
+    fi
+    /usr/bin/printf '%s|%s' "$_kind" "$(/usr/bin/basename "$2")"
+}
+
+# "45s", "2m 10s", "1h 05m".
+format_duration() {   # $1 = seconds
+    /usr/bin/awk -v s="$1" 'BEGIN {
+        s = int(s + 0.5); if (s < 1) s = 1
+        if (s < 60) printf "%ds", s
+        else if (s < 3600) printf "%dm %02ds", int(s / 60), s % 60
+        else printf "%dh %02dm", int(s / 3600), int((s % 3600) / 60) }'
+}
+
+# The estimate for a text, as one sentence for the status line; nothing when this model was never
+# measured. $4 = 1 when the window's broker already holds the model (no load time to add).
+estimate_sentence() {   # $1 = characters, $2 = model folder, $3 = job key, $4 = loaded (0|1)
+    local _chars="$1" _model="$(/usr/bin/basename "$2")"
+    case "$_chars" in ''|*[!0-9]*) return 0 ;; esac
+    local _spk="$(speed_get job "$3" 3)"
+    local _tps="$(speed_get model "$_model" 3)"
+    local _load="$(speed_get model "$_model" 4)"
+    local _text=""
+    case "$_spk" in
+        ''|*[!0-9.]*) ;;
+        *) _text="About $(format_duration "$(/usr/bin/awk -v c="$_chars" -v k="$_spk" 'BEGIN { print c * k / 1000 }')") for $_chars characters." ;;
+    esac
+    if [ -z "$_text" ]; then
+        case "$_tps" in
+            ''|*[!0-9.]*|0|0.*) return 0 ;;
+        esac
+        _text="Roughly $(format_duration "$(/usr/bin/awk -v c="$_chars" -v r="$ESTIMATE_TOKENS_PER_CHAR" -v t="$_tps" 'BEGIN { print c * r / t }')") for $_chars characters, from the model's speed ($(/usr/bin/printf '%.0f' "$_tps") tok/s); it gets more accurate after a run."
+    fi
+    if [ "$4" != 1 ]; then
+        case "$_load" in
+            ''|*[!0-9]*) ;;
+            *) _text="$_text Loading the model first takes about $(format_duration "$_load")." ;;
+        esac
+    fi
+    /usr/bin/printf '%s' "$_text"
+}
+
+# Remember a load: its time, and the warm-up speed when the engine measured one (the llama-server
+# path reports none at load; a finished job's speed fills it in).
+learn_model_load() {   # $1 = model folder, $2 = load seconds, $3 = tok/s (may be empty)
+    local _m="$(/usr/bin/basename "$1")"
+    local _tps="$3"
+    case "$_tps" in ''|*[!0-9.]*|0|0.*) _tps="$(speed_get model "$_m" 3)" ;; esac
+    speed_put model "$_m" "$_tps" "$2"
+}
+
+# Remember a finished job: the model's speed during it, and its seconds per 1000 characters,
+# averaged with what was known (half and half, so one odd run moves it but does not own it).
+learn_job() {   # $1 = model folder, $2 = job key, $3 = seconds, $4 = characters, $5 = tok/s (may be empty)
+    local _m="$(/usr/bin/basename "$1")"
+    case "$5" in
+        ''|*[!0-9.]*|0|0.*) ;;
+        *) speed_put model "$_m" "$5" "$(speed_get model "$_m" 4)" ;;
+    esac
+    case "$4" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$4" -ge "$LEARN_MIN_CHARS" ] || return 0
+    local _old="$(speed_get job "$2" 3)"
+    local _new="$(/usr/bin/awk -v s="$3" -v c="$4" -v o="$_old" 'BEGIN {
+        k = s * 1000 / c; if (o != "" && o + 0 > 0) k = (k + o) / 2; printf "%.3f", k }')"
+    speed_put job "$2" "$_new"
 }

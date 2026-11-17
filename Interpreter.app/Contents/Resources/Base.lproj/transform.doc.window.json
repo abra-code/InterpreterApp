@@ -154,6 +154,17 @@
         },
         {
           "type": "Button",
+          "id": 42,
+          "properties": {
+            "title": "Estimate Time",
+            "buttonStyle": "bordered",
+            "disabled": true,
+            "help": "Estimate how long the job will take, from the speed measured on this Mac",
+            "actionID": "interp.estimate"
+          }
+        },
+        {
+          "type": "Button",
           "id": 41,
           "properties": {
             "title": "Stop",

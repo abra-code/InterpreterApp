@@ -281,6 +281,112 @@ printf '{"epoch":1}' > "$(spool_dir)/job.json"
 omc_run interp.stop
 check_exists "the broker's stop flag was raised" "$(spool_dir)/stop"
 
+speeds_file() { printf '%s/Speeds.tsv' "$INTERP_APP_SUPPORT"; }
+TG12="translategemma-12b-4bit"
+
+section "speeds are remembered per model and per job, one line each"
+reset_document
+interp_call speed_put model "$TG12" 25.0 18
+interp_call speed_put job "translate|$TG12" 2.500
+interp_call speed_put model "$TG12" 30.0 20
+check "a model line is replaced, not added" "1" "$(/usr/bin/grep -c "^model	$TG12	" "$(speeds_file)")"
+check "its speed" "30.0" "$(interp_call speed_get model "$TG12" 3)"
+check "its load time" "20" "$(interp_call speed_get model "$TG12" 4)"
+check "the job line is kept" "2.500" "$(interp_call speed_get job "translate|$TG12" 3)"
+check "an unknown key has nothing" "" "$(interp_call speed_get model nothing-here 3)"
+
+section "durations read naturally"
+check "seconds" "45s" "$(interp_call format_duration 44.6)"
+check "minutes" "2m 10s" "$(interp_call format_duration 130)"
+check "hours" "1h 05m" "$(interp_call format_duration 3900)"
+check "never zero" "1s" "$(interp_call format_duration 0.2)"
+
+section "the estimate prefers the learned time per character"
+reset_document
+interp_call speed_put model "$TG12" 25 18
+interp_call speed_put job "translate|$TG12" 2.000
+check "learned: 2 s per 1000 characters" "About 10s for 5000 characters." \
+    "$(interp_call estimate_sentence 5000 "$(models_dir)/$TG12" "translate|$TG12" 1)"
+check "with the load time when the model is not loaded" \
+    "About 10s for 5000 characters. Loading the model first takes about 18s." \
+    "$(interp_call estimate_sentence 5000 "$(models_dir)/$TG12" "translate|$TG12" 0)"
+check "another transform on the same model falls back to the speed" \
+    "Roughly 1m 00s for 5000 characters, from the model's speed (25 tok/s); it gets more accurate after a run." \
+    "$(interp_call estimate_sentence 5000 "$(models_dir)/$TG12" "summarize|$TG12" 1)"
+check "a model never measured has no estimate" "" \
+    "$(interp_call estimate_sentence 5000 "$(models_dir)/other-model" "translate|other-model" 1)"
+
+section "a finished job teaches the time per character, averaged with what was known"
+reset_document
+interp_call learn_job "$(models_dir)/$TG12" "translate|$TG12" 10 5000 22.5
+check "the first job sets it" "2.000" "$(interp_call speed_get job "translate|$TG12" 3)"
+check "and the model's speed" "22.5" "$(interp_call speed_get model "$TG12" 3)"
+interp_call learn_job "$(models_dir)/$TG12" "translate|$TG12" 20 5000 ""
+check "the next one is averaged in" "3.000" "$(interp_call speed_get job "translate|$TG12" 3)"
+check "a job with no speed keeps the model's" "22.5" "$(interp_call speed_get model "$TG12" 3)"
+interp_call learn_job "$(models_dir)/$TG12" "translate|$TG12" 30 50 ""
+check "a very short job teaches nothing" "3.000" "$(interp_call speed_get job "translate|$TG12" 3)"
+
+section "a load teaches the load time, keeping a known speed when it measured none"
+reset_document
+interp_call speed_put model "$TG12" 25 ""
+interp_call learn_model_load "$(models_dir)/$TG12" 17 ""
+check "the load time" "17" "$(interp_call speed_get model "$TG12" 4)"
+check "the speed stays" "25" "$(interp_call speed_get model "$TG12" 3)"
+
+section "Estimate Time answers from what was measured, loading nothing"
+reset_document
+open_translator
+interp_call speed_put model "$TG12" 25 18
+interp_call speed_put job "translate|$TG12" 2.000
+omc_control "$SRC_EDITOR" "$(/usr/bin/awk 'BEGIN { for (i = 0; i < 50; i++) printf "0123456789" }')"
+omc_run interp.estimate
+check_status "the handler ran" 0
+check "the answer is in the status line" "About 1s for 500 characters. Loading the model first takes about 18s." \
+    "$(ui_value "$STATUS_TEXT")"
+check_absent "nothing was queued" "$(spool_dir)/estimate.next"
+check "the window is not in the queue" "" "$(own_entry)"
+check "nobody was asked" "0" "$(alerts_count)"
+
+section "Estimate Time with no text says so"
+reset_document
+open_translator
+omc_control "$SRC_EDITOR" ""
+omc_run interp.estimate
+check "the status line asks for text" "Type or paste some text to estimate." "$(ui_value "$STATUS_TEXT")"
+check_absent "nothing was queued" "$(spool_dir)/estimate.next"
+
+section "Estimate Time on a model never measured queues a load to measure it"
+reset_document
+open_translator
+omc_run interp.estimate
+check_exists "the request waits for the poller" "$(spool_dir)/estimate.next"
+check "with the character count" "20" "$(spool_file estimate.next)"
+check "for this model" "$(models_dir)/$TG12" "$(spool_file job.next.model)"
+check_absent "it is not a job" "$(spool_dir)/job.next.json"
+check "the window joined the queue" "Speed check of TranslateGemma 12B (4-bit)" \
+    "$(interp_call queue_entry_label "$(own_entry)")"
+check "Translate went off" "0" "$(ui_enabled "$TRANSLATE_BTN")"
+check "Estimate went off" "0" "$(ui_enabled "$ESTIMATE_BTN")"
+check "Stop came on" "1" "$(ui_enabled "$STOP_BTN")"
+check "the status line says so" "Loading the model to measure its speed..." "$(ui_value "$STATUS_TEXT")"
+
+section "Stop withdraws a waiting Estimate Time request"
+omc_run interp.stop
+check_absent "the request is gone" "$(spool_dir)/estimate.next"
+check "the window left the queue" "" "$(own_entry)"
+check_absent "the broker was not told to stop anything" "$(spool_dir)/stop"
+check "the status line says so" "Cancelled." "$(ui_value "$STATUS_TEXT")"
+
+section "Estimate Time while another window works asks first"
+reset_document
+open_translator
+interp_call queue_enqueue "$(make_other_window window-busy)" "Translation with A"
+alert_answer 1
+omc_run interp.estimate
+check "the user was asked" "1" "$(alerts_count)"
+check_absent "Cancel queued nothing" "$(spool_dir)/estimate.next"
+
 section "the next Translate clears an old notice"
 reset_document
 open_translator

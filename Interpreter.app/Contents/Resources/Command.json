@@ -118,6 +118,14 @@
     },
     {
       "NAME": "Interpreter",
+      "COMMAND_ID": "interp.estimate",
+      "EXECUTION_MODE": "exe_script_file",
+      "ENVIRONMENT_VARIABLES": {
+        "OMC_ACTIONUI_VIEW_100_VALUE": ""
+      }
+    },
+    {
+      "NAME": "Interpreter",
       "COMMAND_ID": "interp.swap",
       "EXECUTION_MODE": "exe_script_file",
       "ENVIRONMENT_VARIABLES": {

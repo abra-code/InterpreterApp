@@ -95,6 +95,7 @@ TO_PICKER=21
 SWAP_BTN=30
 TRANSLATE_BTN=40
 STOP_BTN=41
+ESTIMATE_BTN=42
 SRC_EDITOR=100
 TGT_EDITOR=200
 CHAR_TEXT=110
@@ -767,7 +768,9 @@ EOF
 # for is recorded beside it: a job composed for one model family must not run on another.
 queue_job_file() {   # $1 = spool, $2 = built job file
     /usr/bin/printf '%s' "$(/bin/cat "$1/model.dir" 2>/dev/null)" > "$1/job.next.model"
-    /bin/rm -f "$1/job.notice"
+    # A job supersedes an Estimate Time request still waiting (lib.interp.load.sh): the job's turn
+    # loads the same model, and its run is the better measurement.
+    /bin/rm -f "$1/job.notice" "$1/estimate.next"
     /bin/mv "$2" "$1/job.next.json"
 }
 

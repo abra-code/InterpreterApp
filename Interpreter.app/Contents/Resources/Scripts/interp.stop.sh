@@ -19,10 +19,16 @@ spool=$(spool_dir_for "$window_uuid")
 # there first, the rename fails and the stop flag below cancels the job the usual way.
 /bin/mv "$spool/job.next.json" "$spool/job.withdrawn.json" 2>/dev/null
 withdraw_rc=$?
+# An Estimate Time request waiting to load its model is withdrawn the same way.
+if [ "$withdraw_rc" -ne 0 ]; then
+    /bin/mv "$spool/estimate.next" "$spool/job.withdrawn.json" 2>/dev/null
+    withdraw_rc=$?
+fi
 if [ "$withdraw_rc" -eq 0 ]; then
     /bin/rm -f "$spool/job.withdrawn.json"
     withdraw_queued_job "$spool" "Cancelled."
     enable_ctrl "$TRANSLATE_BTN"
+    enable_ctrl "$ESTIMATE_BTN"
     disable_ctrl "$STOP_BTN"
     set_status "Cancelled."
     exit 0
