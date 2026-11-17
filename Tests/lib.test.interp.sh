@@ -126,6 +126,14 @@ export INTERP_AGENT_BIN INTERP_LLAMA_SERVER_BIN INTERP_PDFUTIL_BIN INTERP_LANGID
 export INTERP_POLL_SCRIPT INTERP_MODELS_LOAD_SCRIPT INTERP_MODELS_POLL_SCRIPT
 export INTERP_DOWNLOAD_WORKER_SCRIPT
 
+# Other apps' engines, as the loading manager's scan would list them (lib.interp.load.sh,
+# foreign_engines). Empty unless a test writes lines into it. Set for EVERY file, not only the one
+# about loading: the real scan lists the mlx-agent and llama-server processes of the machine the
+# suite runs on, so with Cadabra open every Translate in every file would raise a memory alert.
+INTERP_FOREIGN_ENGINES_FILE="$OMCTEST_WORK/foreign-engines.txt"
+export INTERP_FOREIGN_ENGINES_FILE
+: > "$INTERP_FOREIGN_ENGINES_FILE"
+
 # Copied rather than symlinked: each fake finds fake_record.sh through
 # "dirname $0", and a symlink would resolve that back to Tests/helpers. Copies
 # keep the two directories from quietly becoming one.
@@ -285,7 +293,7 @@ langfamily()    { spool_file langfamily; }
 model_dir_of()  { spool_file model.dir; }
 input_path()    { spool_file input.path; }
 output_path()   { spool_file output.path; }
-job_json()      { spool_file job.json; }
+job_json()      { spool_file job.next.json; }
 
 # The source text a published job points at - a per-epoch file, so a rapid
 # re-dispatch can never pair one job's text with another job's metadata.

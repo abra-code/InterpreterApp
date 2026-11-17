@@ -72,7 +72,7 @@ check "the window starts on Humanize" "$PRESETS/10-humanize.json" "$(spool_file 
 omc_control "$SRC_EDITOR" "Dzien dobry, to jest dlugi tekst po polsku."
 fake_answer langid 0 'pl'
 omc_run interp.transform.run
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says why" "Humanizer works on English and Chinese text, and this looks like Polish. Choose a Gemma 4 model under Model to rewrite it." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
@@ -89,7 +89,7 @@ for answer in '0|en' '0|zh' '1|'; do
     omc_control "$SRC_EDITOR" "Some text to rewrite."
     fake_answer langid "${answer%%|*}" "${answer#*|}"
     omc_run interp.transform.run
-    check_exists "a job was published ($answer)" "$(spool_dir)/job.json"
+    check_exists "a job was published ($answer)" "$(spool_dir)/job.next.json"
 done
 
 section "a preset without a language list never asks"
@@ -101,7 +101,7 @@ omc_control "$SRC_EDITOR" "Dzien dobry."
 fakes_reset
 fake_answer langid 0 'pl'
 omc_run interp.transform.run
-check_exists "Fix grammar runs on Polish" "$(spool_dir)/job.json"
+check_exists "Fix grammar runs on Polish" "$(spool_dir)/job.next.json"
 check "and langid was not consulted" "0" "$(fake_calls langid)"
 
 section "the refusal names any number of languages"
@@ -135,7 +135,7 @@ omc_control_defaults transform.doc.window
 omc_run interp.tdoc.init
 fake_answer langid 0 'pl'
 omc_run interp.tdoc.run
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "langid read the converted text" "$(spool_dir)/input.plain.txt" \
     "$(fake_argv langid | /usr/bin/sed -n '/^--file$/{n;p;}')"
 check "the status line says why" "Humanizer works on English and Chinese text, and this looks like Polish. Choose a Gemma 4 model under Model to rewrite it." \
@@ -143,7 +143,7 @@ check "the status line says why" "Humanizer works on English and Chinese text, a
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 fake_answer langid 0 'en'
 omc_run interp.tdoc.run
-check_exists "an English document goes through" "$(spool_dir)/job.json"
+check_exists "an English document goes through" "$(spool_dir)/job.next.json"
 
 section "the check reports a result in another language"
 check "Polish in, English out" "Check: The result is in English, but the original is in Polish." \

@@ -11,6 +11,8 @@ Two modes:
 
 The From picker starts with "Detect language" (the default on a first launch): Interpreter names the source language from the text itself, on-device, and the status line says what it found ("Translating from Polish"). Text it cannot place with confidence - a single word such as "Hello" - or text already in the To language is not translated; the status line says why, and choosing the From language yourself always works.
 
+Models load on demand: opening a window or choosing a model loads nothing, and the model loads when you click Translate. Interpreter runs one job at a time across all its windows (two local models generating at once are each slower, and two large ones can exhaust memory), so Translate in one window while another is busy asks whether to queue the job; a queued job starts when the others are done, and Stop withdraws it. Before a model loads, other windows' idle models are unloaded, least recently used first, until it fits in 75% of memory; such a window says so and loads its model again on its next Translate. Models of other apps (such as Cadabra) cannot be unloaded from here: when they leave no room, Interpreter asks before loading.
+
 ## On-device by design
 
 Everything the app does to your text and documents runs on this Mac:

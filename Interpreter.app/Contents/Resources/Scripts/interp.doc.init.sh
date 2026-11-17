@@ -14,7 +14,8 @@ spool=$(spool_dir_for "$window_uuid")
 /bin/mkdir -p "$spool" "$MODELS_DIR"
 /usr/bin/printf 'doc' > "$spool/mode"
 
-# Action controls stay disabled until the poller sees the model reach "ready".
+# Action controls stay disabled until the poller's first tick shows the window idle (a model is
+# selected; it loads when Translate is clicked).
 disable_ctrl "$TRANSLATE_BTN"
 disable_ctrl "$STOP_BTN"
 set_status "Starting…"

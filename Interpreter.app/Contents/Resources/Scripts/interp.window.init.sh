@@ -1,16 +1,17 @@
 # interp.window.init - fired when the translator window loads. Populates the language pickers
 # from languages.tsv and spawns the UI poller. The poller (not this script) owns the mlx-agent
-# map broker: it discovers the installed model, spawns/loads it, keeps the Model picker in sync
-# with what is installed, and reflects loading/ready/translating status into the UI. Spawning
-# the broker from the poller (single owner) is what makes first-run auto-pickup and in-dialog
-# model switching work without this init script knowing about either.
+# map broker: it discovers the installed model, loads it when a job needs it (never on open),
+# keeps the Model picker in sync with what is installed, and reflects idle/loading/translating
+# status into the UI. Spawning the broker from the poller (single owner) is what makes first-run
+# auto-pickup and in-dialog model switching work without this init script knowing about either.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 
 spool=$(spool_dir_for "$window_uuid")
 /bin/mkdir -p "$spool" "$MODELS_DIR"
 
-# Action controls stay disabled until the poller sees the model reach "ready".
+# Action controls stay disabled until the poller's first tick shows the window idle (a model is
+# selected; it loads when Translate is clicked).
 disable_ctrl "$TRANSLATE_BTN"
 disable_ctrl "$SWAP_BTN"
 disable_ctrl "$STOP_BTN"

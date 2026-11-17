@@ -31,6 +31,19 @@ if [ -z "$preset" ] || [ ! -f "$preset" ]; then
     exit 0
 fi
 
+# Another window's job running, or other apps' models filling memory: ask before queuing this one
+# (lib.interp.load.sh). Asked now, at the click, rather than after a conversion that can take
+# minutes of OCR.
+model_dir="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
+label="$(transform_job_label "$preset" "$model_dir")"
+confirm_job_start "$spool" "$model_dir" "$(transform_display_label "$model_dir")"
+confirm_rc=$?
+if [ "$confirm_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "Cancelled."
+    exit 0
+fi
+
 # The destination for THIS job, captured now (see interp.doc.translate): a preset switch while the
 # job runs renames the default output for the next run and must not retarget this write. A settle
 # that printed nothing would leave the capture empty and send the poller to the previous output.
@@ -102,7 +115,12 @@ if [ "$publish_rc" -ne 0 ]; then
     set_status "Could not prepare the job for this transform."
     exit 0
 fi
+queue_enqueue "$spool" "$label"
 
-set_status "$(transform_status_working "$preset")..."
+if [ "$JOB_QUEUED_BEHIND" = 1 ]; then
+    set_status "Waiting for another window to finish..."
+else
+    set_status "$(transform_status_working "$preset")..."
+fi
 
 exit 0

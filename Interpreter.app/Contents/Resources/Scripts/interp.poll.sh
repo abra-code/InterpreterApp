@@ -6,11 +6,17 @@
 # This poller OWNS the mlx-agent map broker. Each tick it:
 #   1. syncs the Model picker + a `modelpaths` index to whatever is installed under Models/,
 #      auto-selecting a model when none is chosen yet (first-run pickup after a download);
-#   2. ensures exactly one broker is running for the selected model, (re)spawning it when the
-#      selection changes (in-dialog switch) or the broker died (crash recovery);
-#   3. reflects the broker's status.json (-> status line + button state) and result.txt into the
+#   2. moves a queued job along (advance_job, lib.interp.load.sh): it waits for this window's
+#      turn in the app-wide queue, then for room in memory (other windows' idle models are
+#      unloaded), then for the model to load, and is handed to the broker last;
+#   3. keeps at most one broker running for the selected model. A broker is spawned only for a
+#      job (load.wanted), never because the window opened or a model was selected; one that is
+#      running is kept until the selection changes, the window closes, or another window's job
+#      needs the memory (spool/evicted);
+#   4. reflects the broker's status.json (-> status line + button state) and result.txt into the
 #      window: text mode pushes into the target editor; doc mode writes the finished translation
-#      to the chosen output file and points the output QuickLook at it.
+#      to the chosen output file and points the output QuickLook at it;
+#   5. leaves the queue when the job is over (release_finished_job).
 # Single ownership here is what lets first-run and model switching work without the init or the
 # switch handler managing broker processes. The two windows share this one poller; only the swap
 # button (text-only) and the result delivery differ by mode.
@@ -43,6 +49,7 @@ if [ "$IS_TRANSFORM" = 1 ]; then
     DOWNLOAD_OPTION="Download models..."
 else
     VERB_ING="Translating"; VERB_PAST="translated"
+    BUTTON_NAME="Translate"
     SAVED_MODEL_KEY="ModelName"
     NO_MODEL_TEXT="No translation model. Choose \"Download models…\" from the Model menu."
     DOWNLOAD_OPTION="Download models…"
@@ -62,6 +69,18 @@ sync_group() {
     GROUP_FAMS="$(preset_families "$_preset" | /usr/bin/tr '\n' ' ')"
     VERB_ING="$(transform_status_working "$_preset")"
     VERB_PAST="$(transform_status_done "$_preset")"
+    BUTTON_NAME="$(preset_get "$_preset" button)"
+    [ -n "$BUTTON_NAME" ] || BUTTON_NAME="Run"
+}
+
+# The queue label of this window's job, for the poller's own enqueue (advance_job).
+window_job_label() {
+    local _m="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
+    if [ "$IS_TRANSFORM" = 1 ]; then
+        transform_job_label "$(/bin/cat "$spool/job.preset" 2>/dev/null)" "$_m"
+    else
+        translation_job_label "$_m"
+    fi
 }
 
 # The installed models this window can pick from, one resolved path per line, and their labels.
@@ -148,9 +167,10 @@ sync_models() {
     # Auto-select: if nothing is chosen yet, or the chosen model is gone, restore the SAVED
     # last-used model (defaults ModelName, written by interp.model.changed on a genuine user
     # pick; matched by directory basename), falling back to the first installed one. This is
-    # the window-open / first-run / post-download pickup path - restoring the preference here
-    # also keeps a second window (text + document open together) on the SAME model, whose
-    # mmap'd weights the two brokers then share instead of stacking two models in memory.
+    # the window-open / first-run / post-download pickup path. Selecting a model loads nothing:
+    # the broker is spawned for a job only. (Two windows on the same MLX model do NOT share its
+    # weights - each mlx-agent copies them into its own GPU buffers - which is why other
+    # windows' idle models are unloaded before a load that would not fit, lib.interp.load.sh.)
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
     local _sel_known=0
     [ -n "$_sel" ] && /usr/bin/grep -Fxq "$_sel" "$spool/modelpaths" 2>/dev/null && _sel_known=1
@@ -241,6 +261,18 @@ ensure_broker() {
                 if [ -f "$spool/load.attempts" ]; then
                     broker_never_loaded "$spool" || /bin/rm -f "$spool/load.attempts"
                 fi
+                # Still loading, and nothing waits for it any more (Stop withdrew the queued job):
+                # do not let it take the memory for nothing. Not one in "error": that is a failed
+                # idle reload, which holds no model and whose message the window must keep
+                # showing (advance_job retires it when the next job comes).
+                if [ ! -f "$spool/load.wanted" ] && [ ! -f "$spool/job.next.json" ] \
+                    && ! job_active "$spool" && broker_never_loaded "$spool"; then
+                    local _bstate="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+                    if [ "$_bstate" != error ]; then
+                        retire_broker
+                        /bin/rm -f "$spool/load.attempts"
+                    fi
+                fi
                 return 0
             fi
             /bin/rm -f "$spool/load.attempts"
@@ -270,6 +302,16 @@ ensure_broker() {
             fi
         else
             /bin/rm -f "$spool/load.attempts"     # another model's broker, or one that had loaded
+            # It died in the middle of a job (a crash: an unload for another window only ever
+            # takes an idle broker). The job goes with the cleanup below, so say so rather than
+            # fall back to a plain "Ready".
+            if [ "$_bmodel" = "$_key" ] && [ -f "$spool/job.json" ]; then
+                case "$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)" in
+                    done|cancelled|error) ;;
+                    *) /usr/bin/printf '%s' "The model stopped during the job. Click $BUTTON_NAME to try again." \
+                           > "$spool/job.notice" ;;
+                esac
+            fi
         fi
         /bin/rm -f "$spool/broker.pid" "$spool/broker.model"
         # Clear the previous broker's status/result AND the previous translation's timing so the
@@ -279,7 +321,13 @@ ensure_broker() {
                    "$spool/translate.start" "$spool/translate.elapsed"
     fi
 
-    disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
+    # No broker is running for the selection. Load only for a job whose turn it is (advance_job
+    # wrote load.wanted after making room): opening a window or picking a model loads nothing.
+    # The job is checked too: Stop may have withdrawn it since advance_job looked.
+    [ -f "$spool/load.wanted" ] && [ -f "$spool/job.next.json" ] || return 0
+
+    /bin/rm -f "$spool/evicted"
+    disable_ctrl "$TRANSLATE_BTN"; disable_swap
     # Where this broker's lines start in agent.log, for load_failure_reason.
     /usr/bin/stat -f '%z' "$spool/agent.log" > "$spool/broker.logstart" 2>/dev/null \
         || /usr/bin/printf '0' > "$spool/broker.logstart"
@@ -294,22 +342,121 @@ ensure_broker() {
     LAST_UI_SIG=""      # force a fresh status render for the new broker
 }
 
+# --- the queued job (lib.interp.load.sh) ------------------------------------
+# A job the handler queued (job.next.json) waits for this window's turn, then for room in memory,
+# then for the model to load, and is handed to the broker (renamed to job.json) only once the
+# model is loaded. Handing it over earlier would lose it: a broker that fails to load is
+# respawned on a cleaned spool, and mlx-agent clears a stop flag when it starts a job, so a Stop
+# during the load would be lost too.
+advance_job() {
+    # No queued job: a load.wanted left now is stale (a Stop withdrew the job while this poller was
+    # making room, then the poller wrote it). Left in place, ensure_broker would load for nothing,
+    # and load again whenever another window unloaded the model.
+    if [ ! -f "$spool/job.next.json" ]; then
+        /bin/rm -f "$spool/load.wanted"
+        return 0
+    fi
+    if [ ! -f "$spool/queue.entry" ]; then
+        # The handler enqueues right after it writes the job. An entry still missing seconds
+        # later means it never did (killed in between): queue the job from here.
+        local _mt="$(/usr/bin/stat -f '%m' "$spool/job.next.json" 2>/dev/null)"
+        case "$_mt" in ''|*[!0-9]*) return 0 ;; esac
+        [ $(( $(/bin/date +%s) - _mt )) -ge 5 ] || return 0
+        queue_enqueue "$spool" "$(window_job_label)"
+    fi
+    queue_is_head "$spool" || return 0
+
+    # The job was built for the model (and transform) selected when it was queued. A raw-prompt
+    # family must not get a chat job, nor a preset's job run on another preset's broker.
+    local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
+    if [ "$(/bin/cat "$spool/job.next.model" 2>/dev/null)" != "$_sel" ]; then
+        withdraw_queued_job "$spool" "The model changed while the job was waiting. Click $BUTTON_NAME again."
+        LAST_UI_SIG=""
+        return 0
+    fi
+    if [ "$IS_TRANSFORM" = 1 ] \
+        && [ "$(/bin/cat "$spool/job.preset" 2>/dev/null)" != "$(/bin/cat "$spool/preset.file" 2>/dev/null)" ]; then
+        withdraw_queued_job "$spool" "The transform changed while the job was waiting. Click $BUTTON_NAME again."
+        LAST_UI_SIG=""
+        return 0
+    fi
+    [ -n "$_sel" ] && [ -d "$_sel" ] || return 0
+    local _key="$(broker_key "$_sel")"
+    if load_failed_for "$spool" "$_key" "$_sel"; then
+        withdraw_queued_job "$spool"      # reflect_ui says why the model could not load
+        LAST_UI_SIG=""
+        return 0
+    fi
+
+    # This window's turn: make room for the model once, then ask ensure_broker to load it.
+    if [ "$(/bin/cat "$spool/load.wanted" 2>/dev/null)" != "$_key" ]; then
+        make_room_for "$spool" "$_sel"
+        /usr/bin/printf '%s' "$_key" > "$spool/load.wanted"
+        LAST_UI_SIG=""
+    fi
+
+    local _bpid="$(/bin/cat "$spool/broker.pid" 2>/dev/null)"
+    pid_alive "$_bpid" || return 0
+    [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" = "$_key" ] || return 0
+    if broker_never_loaded "$spool"; then
+        # An idle-unloaded broker that then failed to reload stays alive in that error and would
+        # never take the job: retire it, so ensure_broker loads afresh (with its retry count).
+        if [ "$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)" = error ]; then
+            retire_broker
+        fi
+        return 0
+    fi
+
+    # Loaded: hand the job over. The rename fails when Stop withdrew the job a moment ago. The
+    # timing starts here, so the elapsed time shown at "done" is the job's own.
+    /bin/mv "$spool/job.next.json" "$spool/job.json" 2>/dev/null || return 0
+    /bin/rm -f "$spool/job.next.model" "$spool/load.wanted" "$spool/translate.elapsed"
+    /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$spool/translate.start" 2>/dev/null
+    LAST_UI_SIG=""
+}
+
+# Leave the queue once the job is over (done, cancelled, failed, or its broker died), so the next
+# window's job can start.
+release_finished_job() {
+    # The entry is read FIRST and only that one is released: a Translate clicked in the meantime
+    # writes a new job and a new entry, which must not go with the old job's release.
+    local _entry="$(/bin/cat "$spool/queue.entry" 2>/dev/null)"
+    [ -n "$_entry" ] || return 0
+    [ -f "$spool/job.next.json" ] && return 0
+    job_active "$spool" && return 0
+    [ "$(/bin/cat "$spool/queue.entry" 2>/dev/null)" = "$_entry" ] || return 0
+    queue_release "$spool"
+}
+
 # --- reflect broker status into the window ----------------------------------
 reflect_ui() {
     local _sel="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
 
-    local _state="" _chunk="" _total="" _msg="" _tps="" _eta=""
-    if [ -f "$spool/status.json" ]; then
-        _state=$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)
-        _chunk=$("$plutil" -extract chunk raw -o - "$spool/status.json" 2>/dev/null)
-        _total=$("$plutil" -extract total raw -o - "$spool/status.json" 2>/dev/null)
-        _msg=$("$plutil" -extract message raw -o - "$spool/status.json" 2>/dev/null)
-        _tps=$("$plutil" -extract tok_per_sec raw -o - "$spool/status.json" 2>/dev/null)
-        _eta=$("$plutil" -extract eta_sec raw -o - "$spool/status.json" 2>/dev/null)
+    # Every field comes from ONE copy of status.json. Read field by field from the live file, the
+    # state could be the previous job's "done" and the epoch already the next job's (the broker
+    # takes a handed-over job within 150 ms): the job would then look finished the moment it
+    # started, and its timing stamp would be spent on that.
+    local _state="" _chunk="" _total="" _msg="" _tps="" _eta="" _sepoch=""
+    local _snap="$spool/status.snap.json"
+    /bin/rm -f "$_snap"
+    [ -f "$spool/status.json" ] && /bin/cp "$spool/status.json" "$_snap" 2>/dev/null
+    if [ -f "$_snap" ]; then
+        _state=$("$plutil" -extract state raw -o - "$_snap" 2>/dev/null)
+        _chunk=$("$plutil" -extract chunk raw -o - "$_snap" 2>/dev/null)
+        _total=$("$plutil" -extract total raw -o - "$_snap" 2>/dev/null)
+        _msg=$("$plutil" -extract message raw -o - "$_snap" 2>/dev/null)
+        _tps=$("$plutil" -extract tok_per_sec raw -o - "$_snap" 2>/dev/null)
+        _eta=$("$plutil" -extract eta_sec raw -o - "$_snap" 2>/dev/null)
+        _sepoch=$("$plutil" -extract epoch raw -o - "$_snap" 2>/dev/null)
     fi
-    # Synthesize a phase for the pre-status.json window: no model vs. broker warming up.
+    # Synthesize a phase for the pre-status.json window: no model, broker warming up, or no broker
+    # at all - the usual state of a window until its first job (idle: the model loads on demand).
+    local _broker_up=0
+    pid_alive "$(/bin/cat "$spool/broker.pid" 2>/dev/null)" && _broker_up=1
     if [ -z "$_state" ]; then
-        if [ -z "$_sel" ]; then _state="nomodel"; else _state="loading"; fi
+        if [ -z "$_sel" ]; then _state="nomodel"
+        elif [ "$_broker_up" = 1 ]; then _state="loading"
+        else _state="idle"; fi
     fi
     # Transform mode: a preset or model switch turns Rewrite off from its handler, which this
     # signature cannot see. The handler leaves ui.stale AFTER recording the switch: forget the
@@ -319,7 +466,8 @@ reflect_ui() {
     # Rewrite is never re-enabled against it.
     if [ "$IS_TRANSFORM" = 1 ]; then
         [ -f "$spool/ui.stale" ] && { /bin/rm -f "$spool/ui.stale"; LAST_UI_SIG=""; }
-        [ -n "$_sel" ] && [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" != "$(broker_key "$_sel")" ] \
+        [ -n "$_sel" ] && [ "$_broker_up" = 1 ] \
+            && [ "$(/bin/cat "$spool/broker.model" 2>/dev/null)" != "$(broker_key "$_sel")" ] \
             && _state="loading"
     fi
     # The selected model could not be loaded (ensure_broker gave up on it, and has just cleared
@@ -329,7 +477,37 @@ reflect_ui() {
         _msg="$(/usr/bin/sed -n 2p "$spool/load.failed" 2>/dev/null)"
     fi
 
-    local _sig="$_state|$_chunk|$_total|$_msg|$_tps|$_eta"
+    # A queued job (lib.interp.load.sh): waiting for other windows' jobs (queued; _msg names the
+    # first of them), or for its own model to load (pending). A job just handed over, whose broker
+    # still reports the previous job, is shown as started rather than as that job's end.
+    local _qn=0
+    if [ -f "$spool/job.next.json" ] && [ "$_state" != loadfailed ]; then
+        local _ahead="$(queue_ahead_of "$spool")"
+        if [ -f "$spool/queue.entry" ] && [ -z "$_ahead" ]; then
+            _state="pending"
+        else
+            _state="queued"
+            _qn="$(/usr/bin/printf '%s\n' "$_ahead" | /usr/bin/grep -c .)"
+            _msg="$(queue_entry_label "$(/usr/bin/printf '%s\n' "$_ahead" | /usr/bin/head -1)")"
+        fi
+    elif [ -f "$spool/job.json" ]; then
+        case "$_state" in ready|done|cancelled|error)
+            local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
+            [ -n "$_jep" ] && [ "$_jep" != "$_sepoch" ] && job_active "$spool" && _state="starting" ;;
+        esac
+    fi
+    # A job withdrawn before it ran (Stop, or a switch while it waited) says so until the next
+    # job, over the idle line or the last run's "Ready". Idle also says when the model was
+    # unloaded for another window, which is more than "loads on demand".
+    local _notice=""
+    case "$_state" in idle|ready|done|cancelled)
+        [ -f "$spool/job.notice" ] && _notice="$(/bin/cat "$spool/job.notice" 2>/dev/null)" ;;
+    esac
+    if [ "$_state" = idle ] && [ -z "$_notice" ] && [ -f "$spool/evicted" ]; then
+        _msg="The model was unloaded to make room for another window's job. It loads again when you click $BUTTON_NAME."
+    fi
+
+    local _sig="$_state|$_chunk|$_total|$_msg|$_tps|$_eta|$_qn|$_notice"
     [ "$_sig" = "$LAST_UI_SIG" ] && return 0
     LAST_UI_SIG="$_sig"
 
@@ -366,6 +544,24 @@ reflect_ui() {
         nomodel)
             disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "$NO_MODEL_TEXT" ;;
+        idle)
+            enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
+            set_status "${_msg:-Ready. The model loads when you click $BUTTON_NAME.}" ;;
+        queued)
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            if [ "$_qn" -gt 1 ]; then
+                set_status "Waiting for $_qn jobs in other windows to finish, first: ${_msg}…"
+            elif [ -n "$_msg" ]; then
+                set_status "Waiting for another window to finish: ${_msg}…"
+            else
+                set_status "Waiting for another window to finish…"
+            fi ;;
+        pending)
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            set_status "Loading model…" ;;
+        starting)
+            disable_ctrl "$TRANSLATE_BTN"; disable_swap; enable_ctrl "$STOP_BTN"
+            set_status "$VERB_ING$_from_note…" ;;
         loading)
             disable_ctrl "$TRANSLATE_BTN"; disable_swap; disable_ctrl "$STOP_BTN"
             set_status "Loading model…" ;;
@@ -425,6 +621,9 @@ reflect_ui() {
             enable_ctrl "$TRANSLATE_BTN"; enable_swap; disable_ctrl "$STOP_BTN"
             set_status "Error: ${_msg:-unknown}" ;;
     esac
+    # Said last, over the line the state just wrote (the done branch still records its timing).
+    [ -n "$_notice" ] && set_status "$_notice"
+    return 0
 }
 
 reflect_result() {
@@ -439,9 +638,13 @@ reflect_result() {
         # job's mid-write result.txt and ship truncated output - gate on the status epoch matching
         # the current job.json epoch so only THIS job's completion delivers. LAST_RESULT_SIG stays
         # unset until we act, so this fires on the completing tick.
-        local _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+        # State and epoch from one copy (see reflect_ui): the previous job's "done" paired with
+        # this job's epoch would deliver this job's partial result as finished.
+        local _snap="$spool/status.result.json"
+        /bin/cp "$spool/status.json" "$_snap" 2>/dev/null || return 0
+        local _st="$("$plutil" -extract state raw -o - "$_snap" 2>/dev/null)"
         [ "$_st" = done ] || return 0
-        local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
+        local _ep="$("$plutil" -extract epoch raw -o - "$_snap" 2>/dev/null)"
         local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
         [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
         # The write, the Output field, the forced preview reload and Reveal all live in
@@ -467,9 +670,12 @@ reflect_result() {
 # once per epoch; interp.transform.run clears the line when it dispatches the next job.
 check_result() {
     [ "$IS_TRANSFORM" = 1 ] || return 0
-    local _st="$("$plutil" -extract state raw -o - "$spool/status.json" 2>/dev/null)"
+    # State and epoch from one copy (see reflect_ui).
+    local _snap="$spool/status.check.json"
+    /bin/cp "$spool/status.json" "$_snap" 2>/dev/null || return 0
+    local _st="$("$plutil" -extract state raw -o - "$_snap" 2>/dev/null)"
     [ "$_st" = done ] || return 0
-    local _ep="$("$plutil" -extract epoch raw -o - "$spool/status.json" 2>/dev/null)"
+    local _ep="$("$plutil" -extract epoch raw -o - "$_snap" 2>/dev/null)"
     local _jep="$("$plutil" -extract epoch raw -o - "$spool/job.json" 2>/dev/null)"
     [ -n "$_ep" ] && [ "$_ep" = "$_jep" ] || return 0
     [ "$_ep" = "$LAST_CHECK_EPOCH" ] && return 0
@@ -480,14 +686,19 @@ check_result() {
     "$dialog" "$window_uuid" "$CHECK_TEXT" "$(/bin/cat "$spool/check.txt" 2>/dev/null)"
 }
 
+# The queue counts a window's entry as live only while its poller runs (lib.interp.load.sh).
+/usr/bin/printf '%s' "$$" > "$spool/poll.pid"
+
 while [ -d "$spool" ]; do
     sync_group
     sync_models
     sync_variant
     sync_languages
+    advance_job
     ensure_broker
     reflect_ui
     reflect_result
     check_result
+    release_finished_job
     /bin/sleep 1
 done

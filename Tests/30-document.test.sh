@@ -284,7 +284,7 @@ omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 omc_trigger "$TRANSLATE_BTN"
 omc_run interp.doc.translate
 check_status "the handler ran" 0
-check_exists "a job was published" "$(spool_dir)/job.json"
+check_exists "a job was published" "$(spool_dir)/job.next.json"
 # textutil runs FOR REAL here: it is deterministic, safe, and it is what
 # normalizes a UTF-16 or BOM'd document to the UTF-8 the model needs. Faking it
 # would leave the one conversion path the applet depends on untested.
@@ -326,7 +326,7 @@ printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
 omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" fr)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 omc_run interp.doc.translate
-check_exists "the run went through" "$(spool_dir)/job.json"
+check_exists "the run went through" "$(spool_dir)/job.next.json"
 check "and the stale flag was cleared" "no" \
     "$([ -f "$(spool_dir)/convert.cancel" ] && echo yes || echo no)"
 
@@ -338,7 +338,7 @@ printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
 omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" fr)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 omc_run interp.doc.translate
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says why" "No text to translate." "$(ui_value "$STATUS_TEXT")"
 # A status-line trace alone is too easy to miss for something the user asked
 # for and did not get.
@@ -358,7 +358,7 @@ printf '%s' "$(models_dir)/translategemma-12b-4bit" > "$(spool_dir)/model.dir"
 omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" fr)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 omc_run interp.doc.translate
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says so" "Could not read this document." "$(ui_value "$STATUS_TEXT")"
 check "and an alert names the file" "Can't read this document" "$(ui_alert_title)"
 check "Translate is usable again"   "1" "$(ui_enabled "$TRANSLATE_BTN")"
@@ -406,7 +406,7 @@ open_doc_window "$doc"
 omc_control "$FROM_PICKER" "99999"
 omc_control "$TO_PICKER" "1"
 omc_run interp.doc.translate
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says what to do" "Please choose valid From and To languages." \
     "$(ui_value "$STATUS_TEXT")"
 check "Translate is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
@@ -419,7 +419,7 @@ open_doc_window "$doc"
 omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" fr)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 omc_run interp.doc.translate
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says so" "No input document." "$(ui_value "$STATUS_TEXT")"
 
 section "a second dispatch cannot interleave with one in flight"
@@ -430,10 +430,10 @@ omc_control "$FROM_PICKER" "$(interp_call from_code_index "$(spool_dir)" fr)"
 omc_control "$TO_PICKER" "$(interp_call lang_code_index "$(spool_dir)" en)"
 /bin/mkdir "$(spool_dir)/dispatch.lock"
 omc_run interp.doc.translate
-check_absent "the second dispatch published nothing" "$(spool_dir)/job.json"
+check_absent "the second dispatch published nothing" "$(spool_dir)/job.next.json"
 /bin/rmdir "$(spool_dir)/dispatch.lock"
 omc_run interp.doc.translate
-check_exists "and goes through once the lock is free" "$(spool_dir)/job.json"
+check_exists "and goes through once the lock is free" "$(spool_dir)/job.next.json"
 
 section "closing the document window sweeps its spool"
 doc="$(make_text_file closing.txt 'text')"

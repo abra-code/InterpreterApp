@@ -168,23 +168,23 @@ Second paragraph: 38% of 14 databases, zuzanna - 中文.'
 omc_control "$SRC_EDITOR" "$text"
 omc_run interp.transform.run
 check_status "run exited cleanly" 0
-check_exists "a job was published" "$(spool_dir)/job.json"
-check "it is epoch 1" "1" "$(/usr/bin/plutil -extract epoch raw -o - "$(spool_dir)/job.json")"
-check "it points at the per-epoch source" "source.1.txt" "$(/usr/bin/plutil -extract text_file raw -o - "$(spool_dir)/job.json")"
+check_exists "a job was published" "$(spool_dir)/job.next.json"
+check "it is epoch 1" "1" "$(/usr/bin/plutil -extract epoch raw -o - "$(spool_dir)/job.next.json")"
+check "it points at the per-epoch source" "source.1.txt" "$(/usr/bin/plutil -extract text_file raw -o - "$(spool_dir)/job.next.json")"
 check "the source text is byte-identical" "$text" "$(spool_file source.1.txt)"
 check "the prompt is the preset's, unchanged" \
     "$(/usr/bin/plutil -extract job.prompt raw -o - "$SHIPPED_PRESET")" \
-    "$(/usr/bin/plutil -extract prompt raw -o - "$(spool_dir)/job.json")"
-check "start-of-text token stays on" "true" "$(/usr/bin/plutil -extract add_special_tokens raw -o - "$(spool_dir)/job.json")"
-check "the chunk budget comes from the preset" "400" "$(/usr/bin/plutil -extract budget_tokens raw -o - "$(spool_dir)/job.json")"
+    "$(/usr/bin/plutil -extract prompt raw -o - "$(spool_dir)/job.next.json")"
+check "start-of-text token stays on" "true" "$(/usr/bin/plutil -extract add_special_tokens raw -o - "$(spool_dir)/job.next.json")"
+check "the chunk budget comes from the preset" "400" "$(/usr/bin/plutil -extract budget_tokens raw -o - "$(spool_dir)/job.next.json")"
 check "Rewrite went off" "0" "$(ui_enabled "$TRANSLATE_BTN")"
 check "Stop came on" "1" "$(ui_enabled "$STOP_BTN")"
 check "the status says so" "Rewriting..." "$(ui_value "$STATUS_TEXT")"
-check "the timing stamp was written" "yes" "$([ -s "$(spool_dir)/translate.start" ] && echo yes || echo no)"
+check_absent "the timing waits for the hand-over to the broker" "$(spool_dir)/translate.start"
 check_absent "the dispatch lock was released" "$(spool_dir)/dispatch.lock"
 omc_control "$SRC_EDITOR" "again"
 omc_run interp.transform.run
-check "a second run is epoch 2" "2" "$(/usr/bin/plutil -extract epoch raw -o - "$(spool_dir)/job.json")"
+check "a second run is epoch 2" "2" "$(/usr/bin/plutil -extract epoch raw -o - "$(spool_dir)/job.next.json")"
 check "with its own source file" "again" "$(spool_file source.2.txt)"
 
 section "Rewrite with nothing to rewrite, or no preset, publishes nothing"
@@ -193,11 +193,11 @@ use_shipped_presets
 open_transform_window
 omc_control "$SRC_EDITOR" ""
 omc_run interp.transform.run
-check_absent "empty text publishes no job" "$(spool_dir)/job.json"
+check_absent "empty text publishes no job" "$(spool_dir)/job.next.json"
 /bin/rm -f "$(spool_dir)/preset.file"
 omc_control "$SRC_EDITOR" "some text"
 omc_run interp.transform.run
-check_absent "no preset publishes no job" "$(spool_dir)/job.json"
+check_absent "no preset publishes no job" "$(spool_dir)/job.next.json"
 check "and says why" "Choose a transform first." "$(ui_value "$STATUS_TEXT")"
 check "leaving Rewrite usable" "1" "$(ui_enabled "$TRANSLATE_BTN")"
 

@@ -181,12 +181,18 @@ publish_transform_job() {   # $1 = spool, $2 = preset file ; source text on STDI
         /bin/rm -f "$_tmp"
         return 1
     fi
-    /bin/rm -f "$_spool/result.txt" "$_spool/translate.start" "$_spool/translate.elapsed" "$_spool/check.txt"
-    /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$_spool/translate.start" 2>/dev/null
+    # The timing stamp is the poller's, written at the hand-over (see publish_translation_job).
+    /bin/rm -f "$_spool/result.txt" "$_spool/check.txt"
     # The preset this job was built from, for the post-run check (the picker may have moved on by
     # the time the job finishes).
     /usr/bin/printf '%s' "$_preset" > "$_spool/job.preset"
-    /bin/mv "$_tmp" "$_spool/job.json"
+    queue_job_file "$_spool" "$_tmp"
+}
+
+# A transform job's queue label ("Humanize with Humanizer 12B (8-bit)").
+transform_job_label() {   # $1 = preset file, $2 = model folder
+    local _name="$(preset_get "$1" name)"
+    /usr/bin/printf '%s with %s' "${_name:-Transform}" "$(transform_display_label "$2")"
 }
 
 # --- the language of a text, for transforms -----------------------------------------------------

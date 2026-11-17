@@ -169,7 +169,7 @@ open_transform_window
 omc_control "$SRC_EDITOR" "Dzien dobry, to jest dlugi tekst po polsku."
 fake_answer langid 0 'pl'
 omc_run interp.transform.run
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line names the models" \
     "Humanizer works on English and Chinese text, and this looks like Polish. Choose a Gemma 4 model under Model to rewrite it." \
     "$(ui_value "$STATUS_TEXT")"
@@ -177,7 +177,7 @@ fill_model_picker
 printf '%s' "$(model_path 1)" > "$(spool_dir)/model.dir"
 pick_model 2
 omc_run interp.transform.run
-check_exists "on Gemma 4 the same text goes through" "$(spool_dir)/job.json"
+check_exists "on Gemma 4 the same text goes through" "$(spool_dir)/job.next.json"
 
 section "the document window lists Humanize once and follows the Model picker too"
 reset_document

@@ -2,7 +2,7 @@
 # picker, takes over selected text from the "Rewrite with Interpreter" service, and spawns the UI
 # poller in transform mode. As in the translator, the poller owns the broker: it lists the
 # installed models of the transform's families, spawns llama-server + map with the preset's
-# settings, and reflects status and results.
+# settings when a job needs the model (never on open), and reflects status and results.
 
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.sh"
 source "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.interp.transform.sh"

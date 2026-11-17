@@ -117,13 +117,13 @@ open_tdoc_window "$doc"
 "$OMC_OMC_SUPPORT_PATH/omc_dialog_control" "$OMC_ACTIONUI_WINDOW_UUID" "$CHECK_TEXT" "Check: stale."
 omc_run interp.tdoc.run
 check_status "the handler ran" 0
-check_exists "a job was published" "$(spool_dir)/job.json"
+check_exists "a job was published" "$(spool_dir)/job.next.json"
 # textutil runs for real, as in 30-document: it is the conversion the window depends on.
 check "the converted text reached the job" "It is important to note that the cat sleeps on the sofa." \
     "$(spool_file source.1.txt | /usr/bin/sed -e 's/[[:space:]]*$//')"
 check "the prompt is the preset's" \
     "$(/usr/bin/plutil -extract job.prompt raw -o - "$APP_RESOURCES/Transformers/10-humanize.json")" \
-    "$(/usr/bin/plutil -extract prompt raw -o - "$(spool_dir)/job.json")"
+    "$(/usr/bin/plutil -extract prompt raw -o - "$(spool_dir)/job.next.json")"
 check "the destination was captured for this job" "$OMCTEST_WORK/source-humanized.txt" "$(spool_file job.output.path)"
 check "Rewrite went off" "0" "$(ui_enabled "$TRANSLATE_BTN")"
 check "Stop came on" "1" "$(ui_enabled "$STOP_BTN")"
@@ -147,7 +147,7 @@ doc="$(make_text_file blank.txt '
    ')"
 open_tdoc_window "$doc"
 omc_run interp.tdoc.run
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says why" "No text in this document." "$(ui_value "$STATUS_TEXT")"
 check "and the user was told" "No text found" "$(ui_alert_title)"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
@@ -159,7 +159,7 @@ pages="$OMCTEST_WORK/Keynote.pages"
 printf 'not really a pages file\n' > "$pages/index.xml"
 open_tdoc_window "$pages"
 omc_run interp.tdoc.run
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the status line says so" "Could not read this document." "$(ui_value "$STATUS_TEXT")"
 check "and an alert names the problem" "Can't read this document" "$(ui_alert_title)"
 
@@ -168,13 +168,13 @@ reset_document
 omc_control_defaults transform.doc.window
 omc_run interp.tdoc.init
 omc_run interp.tdoc.run
-check_absent "no input document, no job" "$(spool_dir)/job.json"
+check_absent "no input document, no job" "$(spool_dir)/job.next.json"
 check "and it says so" "No input document." "$(ui_value "$STATUS_TEXT")"
 doc="$(make_text_file nopreset.txt 'Text.')"
 open_tdoc_window "$doc"
 /bin/rm -f "$(spool_dir)/preset.file"
 omc_run interp.tdoc.run
-check_absent "no preset, no job" "$(spool_dir)/job.json"
+check_absent "no preset, no job" "$(spool_dir)/job.next.json"
 check "and it says so" "Choose a transform first." "$(ui_value "$STATUS_TEXT")"
 
 section "Choose... is remembered against the preset, and survives a switch away and back"
@@ -281,7 +281,7 @@ INTERP_PDFUTIL_BIN="$switcher"; export INTERP_PDFUTIL_BIN
 omc_run interp.tdoc.run
 INTERP_PDFUTIL_BIN="$saved_pdfutil"; export INTERP_PDFUTIL_BIN
 check "(the fake really switched the preset)" "$TEST_PRESETS/20-plain.json" "$(spool_file preset.file)"
-check_absent "nothing was published" "$(spool_dir)/job.json"
+check_absent "nothing was published" "$(spool_dir)/job.next.json"
 check "the user is told to run again" "The transform or model changed while the document was being read. Click Go again." \
     "$(ui_value "$STATUS_TEXT")"
 check "Rewrite is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"
@@ -290,7 +290,7 @@ open_tdoc_window "$scan"
 INTERP_PDFUTIL_BIN="$OMCTEST_WORK/pdfutil-scan"; export INTERP_PDFUTIL_BIN
 omc_run interp.tdoc.run
 INTERP_PDFUTIL_BIN="$saved_pdfutil"; export INTERP_PDFUTIL_BIN
-check_exists "without a switch the job is published" "$(spool_dir)/job.json"
+check_exists "without a switch the job is published" "$(spool_dir)/job.next.json"
 check "with the OCR text" "Recognized words." "$(spool_file source.1.txt | /usr/bin/sed -e 's/[[:space:]]*$//' | /usr/bin/grep -v '^$')"
 
 reset_document

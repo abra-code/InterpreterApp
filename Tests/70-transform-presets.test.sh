@@ -213,7 +213,7 @@ omc_run interp.transform.run
 check "the status line says Summarizing" "Summarizing..." "$(ui_value "$STATUS_TEXT")"
 check "the whole text goes as one chunk budget" "12000" "$(job_field budget_tokens)"
 check "the job carries the reduce template" "{{chunk}}" \
-    "$(/usr/bin/plutil -extract reduce.messages.1.content raw -o - "$(spool_dir)/job.json" 2>/dev/null)"
+    "$(/usr/bin/plutil -extract reduce.messages.1.content raw -o - "$(spool_dir)/job.next.json" 2>/dev/null)"
 
 section "a text longer than one pass is summarized in parts, then the part summaries are summarized"
 # The broker (mlx-agent map) runs the reduce template on a text that fits in one chunk, and the job's

@@ -232,7 +232,7 @@ omc_control "$SRC_EDITOR" "The quick brown fox."
 omc_trigger "$TRANSLATE_BTN"
 omc_run interp.translate
 check_status "the handler ran" 0
-check_exists "a job was published" "$(spool_dir)/job.json"
+check_exists "a job was published" "$(spool_dir)/job.next.json"
 check "the epoch started at 1" "1" "$(job_field epoch)"
 # The source text goes to a per-epoch FILE and the JSON references it, so the
 # JSON itself only ever carries fixed, safe values - text with a quote or a
@@ -241,8 +241,8 @@ check "the text went to a per-epoch file" "The quick brown fox." "$(job_source_t
 check "TranslateGemma gets structured chat content" "yes" \
     "$(job_says '"source_lang_code":"en"')"
 check "with the target code too" "yes" "$(job_says '"target_lang_code":"de"')"
-check "the dispatch was timestamped" "yes" \
-    "$([ -s "$(spool_dir)/translate.start" ] && echo yes || echo no)"
+# The timing starts at the poller's hand-over to the broker, not here (lib.interp.load.sh).
+check_absent "the dispatch is not timed yet" "$(spool_dir)/translate.start"
 # The UI transition the poller would otherwise be the first to make.
 check "Translate went off"    "0" "$(ui_enabled "$TRANSLATE_BTN")"
 check "Swap went off"         "0" "$(ui_enabled "$SWAP_BTN")"
@@ -272,13 +272,13 @@ omc_control_defaults interpreter.window
 omc_run interp.window.init
 omc_control "$SRC_EDITOR" ""
 omc_run interp.translate
-check_absent "nothing was published for an empty source" "$(spool_dir)/job.json"
+check_absent "nothing was published for an empty source" "$(spool_dir)/job.next.json"
 
 omc_control "$SRC_EDITOR" "Some text"
 omc_control "$FROM_PICKER" "99999"
 omc_control "$TO_PICKER" "1"
 omc_run interp.translate
-check_absent "nor for an index that resolves to no language" "$(spool_dir)/job.json"
+check_absent "nor for an index that resolves to no language" "$(spool_dir)/job.next.json"
 check "the status line says what to do about it" \
     "Please choose valid From and To languages." "$(ui_value "$STATUS_TEXT")"
 # The UI has to come back, or the window is left with a dead Translate button.
@@ -300,10 +300,10 @@ omc_control "$SRC_EDITOR" "Held by the lock"
 # Holding it by hand is what a dispatch already in flight looks like.
 /bin/mkdir "$(spool_dir)/dispatch.lock"
 omc_run interp.translate
-check_absent "the second dispatch published nothing" "$(spool_dir)/job.json"
+check_absent "the second dispatch published nothing" "$(spool_dir)/job.next.json"
 /bin/rmdir "$(spool_dir)/dispatch.lock"
 omc_run interp.translate
-check_exists "and goes through once the lock is free" "$(spool_dir)/job.json"
+check_exists "and goes through once the lock is free" "$(spool_dir)/job.next.json"
 
 section "Stop raises the flags the broker and the OCR loop watch"
 reset_document

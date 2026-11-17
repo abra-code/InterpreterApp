@@ -18,17 +18,29 @@ trap '/bin/rmdir "$spool/dispatch.lock" 2>/dev/null' EXIT
 disable_ctrl "$TRANSLATE_BTN"
 enable_ctrl "$STOP_BTN"
 
-nchars=$(/usr/bin/printf '%s' "$src" | LC_ALL=en_US.UTF-8 /usr/bin/wc -m | /usr/bin/tr -d ' ')
-"$dialog" "$window_uuid" "$CHAR_TEXT" "$nchars characters"
-/usr/bin/printf '' | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
-"$dialog" "$window_uuid" "$CHECK_TEXT" ""
-
 preset="$(/bin/cat "$spool/preset.file" 2>/dev/null)"
 if [ -z "$preset" ] || [ ! -f "$preset" ]; then
     enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
     set_status "Choose a transform first."
     exit 0
 fi
+
+# Another window's job running, or other apps' models filling memory: ask before queuing this one
+# (lib.interp.load.sh). A cancel leaves the previous result in place.
+model_dir="$(/bin/cat "$spool/model.dir" 2>/dev/null)"
+label="$(transform_job_label "$preset" "$model_dir")"
+confirm_job_start "$spool" "$model_dir" "$(transform_display_label "$model_dir")"
+confirm_rc=$?
+if [ "$confirm_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "Cancelled."
+    exit 0
+fi
+
+nchars=$(/usr/bin/printf '%s' "$src" | LC_ALL=en_US.UTF-8 /usr/bin/wc -m | /usr/bin/tr -d ' ')
+"$dialog" "$window_uuid" "$CHAR_TEXT" "$nchars characters"
+/usr/bin/printf '' | "$dialog" "$window_uuid" "$TGT_EDITOR" omc_set_value_from_stdin plain
+"$dialog" "$window_uuid" "$CHECK_TEXT" ""
 
 # A preset made for certain languages (Humanize: English and Chinese) refuses a text that is
 # clearly in another one, rather than spending a minute on a rewrite the model was not made for.
@@ -49,7 +61,12 @@ if [ "$rc" -ne 0 ]; then
     set_status "Could not prepare the job for this transform."
     exit 0
 fi
+queue_enqueue "$spool" "$label"
 
-set_status "$(transform_status_working "$preset")..."
+if [ "$JOB_QUEUED_BEHIND" = 1 ]; then
+    set_status "Waiting for another window to finish..."
+else
+    set_status "$(transform_status_working "$preset")..."
+fi
 
 exit 0

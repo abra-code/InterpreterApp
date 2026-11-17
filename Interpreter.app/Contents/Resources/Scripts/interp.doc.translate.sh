@@ -39,6 +39,19 @@ if [ -z "$src_code" ] || [ -z "$tgt_code" ]; then
     exit 0
 fi
 
+# Another window's job running, or other apps' models filling memory: ask before queuing this one
+# (lib.interp.load.sh). Asked now, at the click, rather than after a conversion that can take
+# minutes of OCR.
+model_dir=$(/bin/cat "$spool/model.dir" 2>/dev/null)
+label=$(translation_job_label "$model_dir")
+confirm_job_start "$spool" "$model_dir" "$(model_display_label "$model_dir")"
+confirm_rc=$?
+if [ "$confirm_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; disable_ctrl "$STOP_BTN"
+    set_status "Cancelled."
+    exit 0
+fi
+
 # The output is named after the language it will be in, so settle the destination against the
 # language actually being dispatched (the picker can also have been set programmatically, which
 # interp.to.changed deliberately ignores). Capture it for THIS job: a To change made while the
@@ -131,8 +144,11 @@ if [ $? -ne 0 ]; then
     set_status "Could not prepare the translation for this model and language pair."
     exit 0
 fi
+queue_enqueue "$spool" "$label"
 
-if [ -n "$detected" ]; then
+if [ "$JOB_QUEUED_BEHIND" = 1 ]; then
+    set_status "Waiting for another window to finish…"
+elif [ -n "$detected" ]; then
     set_status "Translating from $(lang_display_name "$detected")…"
 else
     set_status "Translating…"

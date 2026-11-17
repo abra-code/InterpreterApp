@@ -151,7 +151,7 @@ for answer in '1|' '0|de'; do
     omc_control "$SRC_EDITOR" "Guten Tag"
     fake_answer langid "${answer%%|*}" "${answer#*|}"
     omc_run interp.translate
-    check_absent "nothing was published ($answer)" "$(spool_dir)/job.json"
+    check_absent "nothing was published ($answer)" "$(spool_dir)/job.next.json"
     check "Translate is usable again ($answer)" "1" "$(ui_enabled "$TRANSLATE_BTN")"
     check "Swap too ($answer)"                  "1" "$(ui_enabled "$SWAP_BTN")"
     check "and Stop is off ($answer)"           "0" "$(ui_enabled "$STOP_BTN")"
@@ -230,10 +230,10 @@ check "langid read the converted text" "$(spool_dir)/input.plain.txt" \
     "$(fake_argv langid | /usr/bin/sed -n '/^--file$/{n;p;}')"
 check "the status line names it" "Translating from French…" "$(ui_value "$STATUS_TEXT")"
 check "the output is still named for the To language" "$OMCTEST_WORK/lettre-en.txt" "$(output_path)"
-/bin/rm -f "$(spool_dir)/job.json"
+/bin/rm -f "$(spool_dir)/job.next.json"
 fake_answer langid 0 'en'
 omc_run interp.doc.translate
-check_absent "a document already in the To language is not translated" "$(spool_dir)/job.json"
+check_absent "a document already in the To language is not translated" "$(spool_dir)/job.next.json"
 check "and the status line says so" "This text is already in English. Choose another To language." \
     "$(ui_value "$STATUS_TEXT")"
 check "Translate is usable again" "1" "$(ui_enabled "$TRANSLATE_BTN")"

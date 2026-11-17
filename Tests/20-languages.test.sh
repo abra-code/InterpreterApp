@@ -175,7 +175,7 @@ check "and neither does a family with no file" "" \
 section "TranslateGemma gets structured content keyed by CODE"
 prepare_for_model "$tg"
 printf 'Hello world' | interp_call publish_translation_job "$(spool_dir)" en de
-check_exists "a job was published" "$(spool_dir)/job.json"
+check_exists "a job was published" "$(spool_dir)/job.next.json"
 check "with the source code"  "yes" "$(job_says '"source_lang_code":"en"')"
 check "and the target code"   "yes" "$(job_says '"target_lang_code":"de"')"
 check "as chat messages"      "yes" "$(job_says '"messages"')"
@@ -208,12 +208,12 @@ check "no structured content"  "no" "$(job_says '"source_lang_code"')"
 
 section "a named-language family refuses a pair it cannot name"
 prepare_for_model "$hy"
-/bin/rm -f "$(spool_dir)/job.json"
+/bin/rm -f "$(spool_dir)/job.next.json"
 # Afrikaans is in the shipped list but not in Hy-MT2's. Publishing anyway would
 # put a blank language name in the prompt and mistranslate rather than fail.
 check "publishing is refused" "no" \
     "$(printf 'Hello' | interp_call publish_translation_job "$(spool_dir)" en af >/dev/null 2>&1 && echo yes || echo no)"
-check_absent "and nothing was published" "$(spool_dir)/job.json"
+check_absent "and nothing was published" "$(spool_dir)/job.next.json"
 # It still drains stdin, so the caller's pipe neither blocks nor takes a SIGPIPE.
 check "the source text was consumed rather than left in the pipe" "no" \
     "$([ -f "$(spool_dir)/source.1.txt" ] && echo yes || echo no)"
@@ -255,7 +255,7 @@ check "the text survived verbatim" "$tricky" "$(job_source_text)"
 check "and the JSON is a single line of fixed values" "1" \
     "$(job_json | /usr/bin/grep -c '')"
 
-section "a fresh dispatch drops the previous result and timing"
+section "a fresh dispatch drops the previous result, and leaves the timing to the poller"
 prepare_for_model "$tg"
 printf 'x' | interp_call publish_translation_job "$(spool_dir)" en de
 printf 'stale output' > "$(spool_dir)/result.txt"
@@ -264,9 +264,11 @@ printf 'y' | interp_call publish_translation_job "$(spool_dir)" en de
 # The poller re-pushes output only once the broker writes a fresh result, so a
 # stale one left here would be shown as this job's translation.
 check_absent "the stale result is gone"  "$(spool_dir)/result.txt"
-check_absent "and the stale timing too"  "$(spool_dir)/translate.elapsed"
-check "a new dispatch time was stamped" "yes" \
-    "$([ -s "$(spool_dir)/translate.start" ] && echo yes || echo no)"
+# The poller stamps the start when it hands the job to the broker (lib.interp.load.sh), so a wait
+# in the queue or a model load is not counted, and a job withdrawn while it waited leaves the
+# last run's timing as it was.
+check "the last run's timing is left alone" "12.5" "$(spool_file translate.elapsed)"
+check_absent "and no start was stamped yet" "$(spool_dir)/translate.start"
 
 section "the job is published atomically"
 prepare_for_model "$tg"
@@ -274,7 +276,7 @@ printf 'x' | interp_call publish_translation_job "$(spool_dir)" en de
 # It is written to job.json.tmp and moved into place, so the broker never reads
 # a half-written job.
 check_absent "no temporary was left behind" "$(spool_dir)/job.json.tmp"
-check_exists "and the job is there"         "$(spool_dir)/job.json"
+check_exists "and the job is there"         "$(spool_dir)/job.next.json"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids" "" "$(ui_unknown_writes)"

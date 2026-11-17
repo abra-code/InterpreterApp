@@ -755,11 +755,20 @@ EOF
 EOF
     fi
     # Drop the previous job's output so the poller re-pushes only once the broker writes fresh
-    # output; stamp the dispatch moment (high-resolution) and clear any prior elapsed so the poller
-    # can report how long this translation took when it observes "done".
-    /bin/rm -f "$_spool/result.txt" "$_spool/translate.elapsed"
-    /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time' > "$_spool/translate.start" 2>/dev/null
-    /bin/mv "$_spool/job.json.tmp" "$_spool/job.json"
+    # output. The timing stamp (translate.start) is NOT written here: the poller writes it when it
+    # hands the job to the broker, so a wait in the queue or a model load is not counted as
+    # translating, and a job withdrawn while it waited leaves the last run's timing alone.
+    /bin/rm -f "$_spool/result.txt"
+    queue_job_file "$_spool" "$_spool/job.json.tmp"
+}
+
+# Hand a built job to the poller (lib.interp.load.sh): job.next.json, not job.json - the poller
+# moves it to job.json when the job's turn comes and the model is loaded. The model it was built
+# for is recorded beside it: a job composed for one model family must not run on another.
+queue_job_file() {   # $1 = spool, $2 = built job file
+    /usr/bin/printf '%s' "$(/bin/cat "$1/model.dir" 2>/dev/null)" > "$1/job.next.model"
+    /bin/rm -f "$1/job.notice"
+    /bin/mv "$2" "$1/job.next.json"
 }
 
 # True if the file carries the PDF signature "%PDF-" near its start. Detection is by content, not
@@ -1066,3 +1075,6 @@ deliver_doc_result() {   # $1 = spool
 # interp_apply_kind). Background scripts that receive their window uuid as an argument call
 # interp_apply_window_kind themselves after setting it.
 interp_apply_window_kind
+
+# The model loading manager: one job at a time, and a memory budget for what is loaded.
+source "$SCRIPTS_DIR/lib.interp.load.sh"

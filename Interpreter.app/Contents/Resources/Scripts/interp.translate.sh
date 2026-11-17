@@ -55,6 +55,19 @@ if [ "$src_code" = "$DETECT_CODE" ]; then
 fi
 note_detected_language "$spool" "$detected"
 
+# Another window's job running, or other apps' models filling memory: ask before queuing this one
+# (lib.interp.load.sh). A cancel leaves the previous translation in place.
+model_dir=$(/bin/cat "$spool/model.dir" 2>/dev/null)
+label=$(translation_job_label "$model_dir")
+confirm_job_start "$spool" "$model_dir" "$(model_display_label "$model_dir")"
+confirm_rc=$?
+if [ "$confirm_rc" -ne 0 ]; then
+    enable_ctrl "$TRANSLATE_BTN"; enable_ctrl "$SWAP_BTN"
+    disable_ctrl "$STOP_BTN"
+    set_status "Cancelled."
+    exit 0
+fi
+
 # Character counter (on translate only; no per-keystroke handler in v1). wc -m under a UTF-8
 # locale counts characters regardless of the ambient LANG.
 nchars=$(/usr/bin/printf '%s' "$src" | LC_ALL=en_US.UTF-8 /usr/bin/wc -m | /usr/bin/tr -d ' ')
@@ -76,8 +89,11 @@ if [ $? -ne 0 ]; then
     set_status "Could not prepare the translation for this model and language pair."
     exit 0
 fi
+queue_enqueue "$spool" "$label"
 
-if [ -n "$detected" ]; then
+if [ "$JOB_QUEUED_BEHIND" = 1 ]; then
+    set_status "Waiting for another window to finish…"
+elif [ -n "$detected" ]; then
     set_status "Translating from $(lang_display_name "$detected")…"
 else
     set_status "Translating…"
