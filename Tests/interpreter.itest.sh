@@ -10,9 +10,10 @@
 # test's own, so its model library starts empty: the launch shows the first-run state, and the
 # model chooser it opens by itself waits for Show Models before it asks Hugging Face for the
 # catalog (the test never clicks it). The test then puts a model folder in the library that has a
-# config.json and no weights: every window picks it up as installed, mlx-agent refuses it in
-# milliseconds, and after a second try the windows say they could not load it, so Translate is
-# never offered. Nothing is translated.
+# config.json and no weights: every window picks it up as installed and waits for Translate before
+# loading it. Translate in the translator window makes mlx-agent refuse it in milliseconds, and
+# after a second try the window says it could not load it and turns Translate off. Nothing is
+# translated.
 #
 # Not touched: the language pickers and Swap. Their handlers save the choice with /usr/bin/defaults,
 # which writes the user's own preferences whatever $HOME says; the last section checks that the
@@ -21,8 +22,8 @@
 
 eval "$(/usr/bin/sed -n 's/^\([A-Z][A-Z_]*\)=\([0-9][0-9]*\)$/\1=\2/p' \
     "$ITEST_APP/Contents/Resources/Scripts/lib.interp.sh")"
-check "the view ids imported from lib.interp.sh" "25 20 21 40 300 130 230 231" \
-    "$MODEL_PICKER $FROM_PICKER $TO_PICKER $TRANSLATE_BTN $STATUS_TEXT $INPUT_PATH_TEXT $OUTPUT_PATH_TEXT $CHOOSE_OUTPUT_BTN"
+check "the view ids imported from lib.interp.sh" "25 20 21 40 100 300 130 230 231" \
+    "$MODEL_PICKER $FROM_PICKER $TO_PICKER $TRANSLATE_BTN $SRC_EDITOR $STATUS_TEXT $INPUT_PATH_TEXT $OUTPUT_PATH_TEXT $CHOOSE_OUTPUT_BTN"
 
 SUPPORT="$ITEST_HOME/Library/Application Support/Interpreter"
 BUNDLE_ID="com.abracode.Interpreter"
@@ -129,19 +130,37 @@ check "closing the chooser closes it" "0" "$(itest_windows | /usr/bin/grep -c -x
 check "and its end command removed its state" "no" "$([ -d "$SUPPORT/Downloads/.chooser.$chooser" ] && printf yes || printf no)"
 
 section "A model that appears in the library is picked up by the open window"
-# As after a download: the window's poller rescans the library every second. This model has no
-# weights, so mlx-agent refuses it; the poller tries twice, then gives up and says why.
+# As after a download: the window's poller rescans the library every second. Picking the model up
+# does not load it: the window offers Translate and loads the model only when it is clicked.
 /bin/mkdir -p "$SUPPORT/Models/itest-unloadable"
 printf '{}\n' > "$SUPPORT/Models/itest-unloadable/config.json"
 model_options="$(wait_for_property "$translator" "$MODEL_PICKER" options itest-unloadable 10)"
 check "the Model menu lists it" "2" "$(entries "$model_options")"
 check_contains "by its folder name" '"itest-unloadable"' "$model_options"
+check_contains "the window waits for Translate to load it" "The model loads when you click Translate" \
+    "$(wait_for_value "$translator" "$STATUS_TEXT" "The model loads when you click Translate" 10)"
+check "Translate is on" "false" "$(property "$translator" "$TRANSLATE_BTN" disabled)"
+# Given up: no broker is started again, so its log stops growing at the two tries.
+failures() { /usr/bin/grep -c 'model load failed' "$SUPPORT/Sessions/$translator/agent.log" 2>/dev/null; }
+# A few poller ticks: a window that still loaded on pickup would have started a broker by now.
+/bin/sleep 3
+tries="$(failures)"
+check "and nothing was loaded meanwhile" "no 0" \
+    "$([ -e "$SUPPORT/Sessions/$translator/broker.pid" ] && printf yes || printf no) ${tries:-0}"
+
+section "Translate loads the model, and a model that cannot load says why"
+# This model has no weights, so mlx-agent refuses it; the poller tries twice, then gives up and
+# says why. From and To are set by index (the second option of each list, From's first being
+# Detect language), so the job does not depend on language detection or on the user's saved
+# languages; setting a value runs no handler, so nothing is saved.
+itest_set_value "$translator" "$SRC_EDITOR" "Bonjour tout le monde." > /dev/null
+itest_set_value "$translator" "$FROM_PICKER" 2 > /dev/null
+itest_set_value "$translator" "$TO_PICKER" 3 > /dev/null
+check "the button fires interp.translate" "interp.translate" "$(itest_click "$translator" "$TRANSLATE_BTN")"
 status="$(wait_for_value "$translator" "$STATUS_TEXT" "Could not load this model" 15)"
 check_contains "the window says it could not load it" "Could not load this model: " "$status"
 check_contains "with mlx-agent's reason" "Missing field 'model_type'" "$status"
-check "Translate stays off" "true" "$(property "$translator" "$TRANSLATE_BTN" disabled)"
-# Given up: no broker is started again, so its log stops growing at the two tries.
-failures() { /usr/bin/grep -c 'model load failed' "$SUPPORT/Sessions/$translator/agent.log" 2>/dev/null; }
+check "Translate is off now" "true" "$(property "$translator" "$TRANSLATE_BTN" disabled)"
 check "it tried twice" "2" "$(failures)"
 /bin/sleep 3
 check "and three seconds later no more" "2" "$(failures)"
@@ -160,8 +179,10 @@ check "the document window took the dropped file" "$ITEST_WORK/notes.txt" "$(ite
 to_code="$(/bin/cat "$SUPPORT/Sessions/$doc/to.code" 2>/dev/null)"
 check "the output is named for the To language, next to the original" "$ITEST_WORK/notes-$to_code.txt" \
     "$(itest_value "$doc" "$OUTPUT_PATH_TEXT")"
-check_contains "it too says the model cannot load" "Could not load this model" \
-    "$(wait_for_value "$doc" "$STATUS_TEXT" "Could not load this model" 15)"
+# Each window keeps its own record of a failed load: this one has not tried the model yet.
+check_contains "it too waits for Translate to load the model" "The model loads when you click Translate" \
+    "$(wait_for_value "$doc" "$STATUS_TEXT" "The model loads when you click Translate" 10)"
+check "with no broker of its own" "no" "$([ -e "$SUPPORT/Sessions/$doc/broker.pid" ] && printf yes || printf no)"
 
 section "File > Open asks for the document through the open panel"
 itest_panels_clear
